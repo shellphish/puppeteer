@@ -1,0 +1,2 @@
+class CantDoItCaptainError(Exception):
+    pass
