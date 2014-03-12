@@ -6,8 +6,9 @@ We spent a lot of time, and a lot of implementation effort, making programs danc
 
 ## Features
 
-- targeted read (safe and unsafe)
-- targeted write (safe and unsafe)
+- targeted read
+- targeted write
+- printf stuff
 
 - PLT redirection
 - callsite preparation
@@ -26,3 +27,8 @@ We spent a lot of time, and a lot of implementation effort, making programs danc
 - execute command
 - read file(s)
 - dump out process maps?
+
+- maybe have some idalink support for determining more stuff automatically?
+- rop stuff (at least find the cleanup gadgets automatically)
+- identify the base address of libc, or just dump it
+- implement the pwntools library searching stuff
