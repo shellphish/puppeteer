@@ -7,6 +7,12 @@ class Aggravator(puppeteer.Manipulator):
     def __init__(self, host, port):
         puppeteer.Manipulator.__init__(self, puppeteer.x86)
 
+        # some initial info from IDA
+        # TODO: maybe use IDALink to get this automatically?
+        self.locations['main'] = 0x0804A9B3
+        self.locations['#main_end'] = 0x0804A9D1
+        self.info['main_stackframe_size'] = 0x24
+
         self.t = telnetlib.Telnet(host, port)
         self.s = self.t.get_socket()
         self.f = self.s.makefile()
@@ -34,12 +40,6 @@ def main():
 
     # Create the Aggravator!
     a = Aggravator(sys.argv[1], int(sys.argv[2]))
-
-    # ... and give it some initial info from IDA
-    # TODO: maybe use IDALink to get this automatically?
-    a.locations['main'] = 0x0804A9B3
-    a.locations['#main_end'] = 0x0804A9D1
-    a.info['main_stackframe_size'] = 0x24
 
     # And now, we can to stuff!
 

@@ -39,30 +39,30 @@ class Manipulator:
         if type(n) == str:
             return struct.unpack(self.arch.struct_fmt, n)[0]
 
-    def _get_actions(self, t, safe):
-        actions = [ ]
-        unsafe_actions = [ ]
+    def _get_vulns(self, t, safe):
+        vulns = [ ]
+        unsafe_vulns = [ ]
 
-        l.debug("Looking for a %s action with safe=%s", t, safe)
+        l.debug("Looking for a %s vuln with safe=%s", t, safe)
 
         for a in dir(self):
             #l.debug("... checking attribute %s", a)
             f = getattr(self, a)
             if hasattr(f, 'puppeteer_flags') and f.puppeteer_flags['type'] == t:
                 if f.puppeteer_flags['safe']:
-                    actions.append(f)
+                    vulns.append(f)
                 else:
-                    unsafe_actions.append(f)
+                    unsafe_vulns.append(f)
 
         if safe is None:
-            return actions + unsafe_actions
+            return vulns + unsafe_vulns
         elif safe:
-            return actions
+            return vulns
         elif not safe:
-            return unsafe_actions
+            return unsafe_vulns
 
-    def _do_action(self, action_type, args, kwargs, safe=None):
-        funcs = self._get_actions(action_type, safe)
+    def _do_vuln(self, vuln_type, args, kwargs, safe=None):
+        funcs = self._get_vulns(vuln_type, safe)
 
         for f in funcs:
             try:
@@ -71,23 +71,23 @@ class Manipulator:
             except CantDoItCaptainError:
                 l.debug("... failed!")
 
-        l.debug("Couldn't find an appropriate action memory :-(")
-        raise CantDoItCaptainError("No %s%s functions available!" % (('safe ' if safe is True else ('unsafe ' if self is False else '')), action_type))
+        l.debug("Couldn't find an appropriate vuln :-(")
+        raise CantDoItCaptainError("No %s%s functions available!" % (('safe ' if safe is True else ('unsafe ' if self is False else '')), vuln_type))
 
     #
     # Actions!
     #
 
     def do_memory_read(self, addr, length, safe=None):
-        ''' Finds and executes an action that does a memory read. '''
-        return self._do_action('memory_read', (addr, length), { }, safe=True)
+        ''' Finds and executes an vuln that does a memory read. '''
+        return self._do_vuln('memory_read', (addr, length), { }, safe=True)
 
     def do_register_read(self, reg, safe=None):
-        ''' Finds and executes an action that does a register read. '''
-        return self._do_action('register_read', (reg,), { }, safe=True)
+        ''' Finds and executes an vuln that does a register read. '''
+        return self._do_vuln('register_read', (reg,), { }, safe=True)
 
     def do_memory_write(self, addr, content, safe=None):
-        ''' Finds and executes an action that does a memory write. '''
+        ''' Finds and executes an vuln that does a memory write. '''
 
         # if safe is None, try safe first, then unsafe
         if safe is None:
@@ -96,7 +96,7 @@ class Manipulator:
 
         l.debug("First trying a direct memory write.")
         try:
-            return self._do_action('memory_write', (addr, content), { }, safe=True)
+            return self._do_vuln('memory_write', (addr, content), { }, safe=True)
         except CantDoItCaptainError:
             l.debug("... just can't do it, captain!")
 
@@ -104,18 +104,18 @@ class Manipulator:
         return self.do_printf((addr, content), safe=None)
 
     def do_register_write(self, reg, content, safe=None):
-        ''' Finds and executes an action that does a register write. '''
-        return self._do_action('register_write', (reg, content), { }, safe=True)
+        ''' Finds and executes an vuln that does a register write. '''
+        return self._do_vuln('register_write', (reg, content), { }, safe=True)
 
     def do_printf(self, stuff, safe=None):
-        ''' Finds and executes an action that does a memory read. '''
+        ''' Finds and executes an vuln that does a memory read. '''
 
         if type(stuff) is str:
             # if it's a string, just do the format string
-            return self._do_action('printf', (stuff,), { }, safe=None)
+            return self._do_vuln('printf', (stuff,), { }, safe=None)
         else:
             # this is an overwrite of a set of bytes. We don't care about the output.
-            funcs = self._get_actions('printf', safe)
+            funcs = self._get_vulns('printf', safe)
             chunks = [ (stuff[0]+i, j) for i,j in enumerate(stuff[1]) ]
 
             for c in chunks:
