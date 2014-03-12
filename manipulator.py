@@ -1,6 +1,5 @@
 import logging
 l = logging.getLogger("puppeteer.manipulator")
-l.setLevel(logging.DEBUG)
 
 import abc
 import struct
