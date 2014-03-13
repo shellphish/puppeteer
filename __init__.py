@@ -3,5 +3,6 @@
 from .manipulator import *
 from .errors import *
 from .architectures import *
-from .vuln_decorators import *
 from .formatter import *
+from .vuln_decorators import *
+from .utils import *
