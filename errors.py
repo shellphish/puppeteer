@@ -1,2 +1,2 @@
-class CantDoItCaptainError(Exception):
+class NotLeetEnough(Exception):
     pass

