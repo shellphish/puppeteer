@@ -7,6 +7,8 @@ def read_until(s, what, timeout=None):
     content = ""
     while not content.endswith(what):
         l.debug("So far: %s (size %d)", content, len(content))
-        content += s.recv(1)
-    l.debug("GREAT SUCCESS")
+        try:
+            content += s.recv(1)
+        except Exception:
+            break
     return content

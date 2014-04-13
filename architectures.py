@@ -14,6 +14,8 @@ class x86:
 	endness = '<'
 	struct_char = "I"
 	struct_fmt = '<I'
+	python_fmt = "%08x"
+	page_size = 0x1000
 
 class amd64:
 	bits = 64
@@ -24,6 +26,8 @@ class amd64:
 	endness = '<'
 	struct_char = "Q"
 	struct_fmt = '<Q'
+	python_fmt = "%16x"
+	page_size = 0x1000
 
 class arm:
 	bits = 32
@@ -34,6 +38,8 @@ class arm:
 	endness = '<'
 	struct_char = "I"
 	struct_fmt = '<I'
+	python_fmt = "%08x"
+	page_size = 0x1000
 
 class ppc:
 	bits = 32
@@ -44,3 +50,5 @@ class ppc:
 	endness = '<'
 	struct_char = "I"
 	struct_fmt = '>I'
+	python_fmt = "%08x"
+	page_size = 0x1000

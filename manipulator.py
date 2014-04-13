@@ -3,6 +3,7 @@ l = logging.getLogger("puppeteer.manipulator")
 
 import abc
 import struct
+import string # pylint: disable=deprecated-module
 import itertools
 
 from .errors import * #pylint: disable=wildcard-import
@@ -22,6 +23,10 @@ class Manipulator:
         self.rop_cleanups = { }
         self.locations = { }
         self.info = { }
+
+        self.got_base = 0
+        self.got_size = 0
+        self.got_names = [ ]
 
     #
     # Utility funcs
@@ -81,10 +86,25 @@ class Manipulator:
     def do_memory_read(self, addr, length, safe=None):
         ''' Finds and executes an vuln that does a memory read. '''
 
+        # if safe is None, try safe first, then unsafe
+        if safe is None:
+            try: return self.do_memory_read(addr, length, safe=True)
+            except NotLeetEnough: return self.do_memory_read(addr, length, safe=False)
+
         # first, try to do it directly
         try:
-            l.debug("Trying a direct memory read.")
-            return self._do_vuln('memory_read', (addr, length), { }, safe=True)
+            funcs = self._get_vulns('memory_read', safe)
+
+            for f in funcs:
+                l.debug("Trying a direct memory read with %s", f.__name__)
+                max_size = f.puppeteer_flags['max_size']
+
+                r = ""
+                while len(r) < length:
+                    toread = min(length, max_size)
+                    l.debug("... reading %d bytes", toread)
+                    r += f(addr + len(r), toread)
+                return r
         except NotLeetEnough:
             l.debug("... l4m3!")
 
@@ -192,6 +212,22 @@ class Manipulator:
     # More complex stuff
     #
 
+    def read_got_entry(self, which, safe=None):
+        if type(which) == str:
+            which = self.got_names.index(which)
+        return self.do_memory_read(self.got_base+which*self.arch.bytes, self.arch.bytes, safe=safe)
+
+    def dump_got(self, which, safe=None):
+        return self.do_memory_read(self.got_base, self.got_size*self.arch.bytes, safe=safe)
+
+    def do_relative_read(self, offset, length, reg=None):
+        reg = self.arch.sp_name if reg is None else reg
+        return self.do_memory_read(self.do_register_read(reg) + offset, length)
+
+    def do_page_read(self, addr):
+        base = addr - (addr % self.arch.page_size)
+        return self.do_memory_read(base, self.arch.page_size)
+
     def redirect_library_function(self, name, target, safe=None):
         '''
         Redirects a PLT entry to jump to target.
@@ -254,6 +290,85 @@ class Manipulator:
         fmt = offset_read(i, self.arch.bytes*2, max_offset=10000, round_to=self.arch.bytes, pad_with='_')
         v = struct.unpack(">" + self.arch.struct_char, self.do_printf(fmt).replace('_', '').decode('hex'))[0]
         return v
+
+    #
+    # Crazy UI
+    #
+    def memory_display_page(self, p, addr):
+        perline = 24
+        print ""
+        print "# Displaying the page at 0x" + (self.arch.python_fmt % addr)
+        print ""
+        for i in range(0, len(p), perline):
+            line = p[i:i+perline]
+            count = 0
+            for c in line:
+                print c.encode('hex'),
+                count += 1
+                if count % 4 == 0:
+                    print "",
+
+            print '|',"".join([ (c if c in string.letters + string.digits + string.punctuation else '.') for c in line ])
+
+        nums = sorted(tuple(set(struct.unpack(self.arch.endness + str(self.arch.page_size/self.arch.bytes) + self.arch.struct_char, p))))
+
+        perline = 10
+        print ""
+        print "# Aligned integers in the page:"
+        print ""
+        for i in range(0, len(nums), perline):
+            line = nums[i:i+perline]
+            print " ".join([ self.arch.python_fmt % c for c in line ])
+
+        nums = sorted(tuple(set([ i - i%self.arch.page_size for i in struct.unpack(self.arch.endness + str(self.arch.page_size/self.arch.bytes) + self.arch.struct_char, p) ])))
+
+        perline = 10
+        print ""
+        print "# Possible pages to look at next:"
+        print ""
+        for i in range(0, len(nums), perline):
+            line = nums[i:i+perline]
+            print " ".join([ self.arch.python_fmt % c for c in line ])
+
+    def memory_explorer(self):
+        print "###"
+        print "### Super Memory Explorer 64"
+        print "###"
+        print ""
+        sp = self.do_register_read('esp')
+        print "SP:", hex(sp)
+
+        a = 'asdf'
+        addr = None
+
+        while a != 'q':
+            print ""
+            print "# Please enter one of:"
+            print "#"
+            print "#    - sp (to go back to the stack)"
+            print "#    - a hex address (to look at its page)"
+            print "#    - q (to quit)"
+            print "#    - '' or 'n'(to look at the next page)"
+            print "#    - 'p' (to look at the previous page)"
+            a = raw_input("> ")
+
+            if a in ['sp']:
+                addr = sp
+            elif a in ['', 'n']:
+                addr = addr + self.arch.page_size if addr is not None else sp
+            elif a in ['p']:
+                addr = addr - self.arch.page_size if addr is not None else sp
+            else:
+                try:
+                    addr = int(a, 16)
+                except ValueError:
+                    continue
+
+            addr -= addr % self.arch.page_size
+
+            p = self.do_page_read(addr)
+            self.memory_display_page(p, addr)
+
 
 
     #
