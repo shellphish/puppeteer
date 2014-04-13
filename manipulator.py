@@ -6,9 +6,10 @@ import struct
 import string # pylint: disable=deprecated-module
 import itertools
 
-from .errors import * #pylint: disable=wildcard-import
+from .errors import NotLeetEnough
 from .formatter import absolute_string, offset_read
 from .architectures import x86
+from .rop import ROPChain
 
 # pylint: disable=no-self-use,unused-argument
 class Manipulator:
@@ -31,6 +32,18 @@ class Manipulator:
     #
     # Utility funcs
     #
+
+    def fix_endness_strided(self, s):
+        '''
+        Goes through the string, in chunks of the bitwidth of the architecture,
+        and fixes endness.
+        '''
+        if self.arch.endness == '>':
+            return s
+
+        return "".join([ s[i:i+self.arch.bytes][::-1] for i in range(0, len(s), self.arch.bytes) ])
+
+
 
     def pack(self, n):
         if type(n) in (int, long):
@@ -221,8 +234,22 @@ class Manipulator:
         return self.do_memory_read(self.got_base, self.got_size*self.arch.bytes, safe=safe)
 
     def do_relative_read(self, offset, length, reg=None):
-        reg = self.arch.sp_name if reg is None else reg
-        return self.do_memory_read(self.do_register_read(reg) + offset, length)
+        try:
+            reg = self.arch.sp_name if reg is None else reg
+            return self.do_memory_read(self.do_register_read(reg) + offset, length)
+        except NotLeetEnough:
+            if reg != self.arch.sp_name:
+                raise
+
+            funcs = self._get_vulns('printf', None)
+            for f in funcs:
+                result = ""
+                max_i = (length + self.arch.bytes - 1) / self.arch.bytes
+                while len(result) < length:
+                    fmt = offset_read(offset/self.arch.bytes + len(result)/(self.arch.bytes*2), self.arch.bytes*2, max_length=f.puppeteer_flags['max_fmt_size'], max_offset=max_i, round_to=self.arch.bytes, pad_with='_')
+                    result += f(fmt).replace('_', '')
+
+            return self.fix_endness_strided(result.decode('hex'))
 
     def do_page_read(self, addr):
         base = addr - (addr % self.arch.page_size)
@@ -251,22 +278,7 @@ class Manipulator:
             try: return self.read_stack(length, safe=True)
             except NotLeetEnough: return self.read_stack(length, safe=False)
 
-        # First, try direct memory reads. Then try a printf.
-        try:
-            l.debug("Trying to read %s and read bytes directly.", self.arch.sp_name)
-
-            sp = self.do_register_read(self.arch.sp_name)
-            return self.do_memory_read(sp, length)
-        except NotLeetEnough:
-            l.debug("... I just can't do it, captain!", exc_info=True)
-
-        l.debug("Now trying to use a format string.")
-        # read bytes a wordsize at a time
-        result = ""
-        max_i = (length + self.arch.bytes - 1) / self.arch.bytes
-        for i in range(1, max_i):
-            result += self.do_printf(offset_read(i, self.arch.bytes*2, max_offset=max_i, round_to=self.arch.bytes, pad_with='_')).replace('_', '')
-        return result.decode('hex')
+        return self.do_relative_read(0, length, reg=self.arch.sp_name)
 
     def main_return_address(self, start_offset=1):
         # strategy:
@@ -374,6 +386,9 @@ class Manipulator:
     #
     # ROP stuff
     #
+
+    def new_rop(self, chain=None, length=None):
+        return ROPChain(arch=self.arch, chain=chain, length=length)
 
     def rop_site_array(self, call_target, ret_target, args, cleanup=True):
         '''

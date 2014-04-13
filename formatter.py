@@ -51,25 +51,43 @@ def pad_to_offset(byte_offset, word_size=4):
 
 	return fmt, word_offset
 
-def offset_read(offset, read_pad, max_offset=None, round_to=None, pad_with="_"):
+def offset_read(offset, read_pad, max_length=None, max_offset=None, round_to=None, pad_with="_"):
 	'''
 	Builds an format string for reading at a specified offset.
 
-	@param offset: the offset
+	@param offset: the offset to start reading at
 	@param read_pad: the number in the %08x part
+	@param max_read: the maximum number of bytes that can be read (TODO)
+	@param max_length: the maximum length of the format string
 	@param max_offset: the maximum offset to expect, to make padding easier (and avoid stack movement)
 	@param round_to: alternatively, round the size of the format string up to this many bytes
 	@param round_with: the character to use for padding (default '_')
 	'''
 	if max_offset is not None:
-		offset_fmt = "%%0%dd" % int(math.ceil(math.log(max_offset, 10)))
-		offset_str = offset_fmt % offset
+		offset_fmt = "%0" + ("%dd" % int(math.ceil(math.log(max_offset, 10))))
+		#offset_str = offset_fmt % offset
 	else:
-		offset = ""
-	fmt = "%%%s$0%dx" % (offset_str, read_pad)
+		offset_fmt = "%d"
+
+	fmt = "%%" + offset_fmt + "$0%dx" % (read_pad)
+	num_reads = max_length / len(fmt) if max_length is not None else 1
+	if offset == 0:
+		num_reads -= 1
+		offset += 1
+		fmt *= num_reads
+		fmt = "%%" + ("0%dx" % (read_pad)) + fmt
+	else:
+		fmt *= num_reads
+
+	#print "OFFSETS:", range(offset, offset + num_reads)
+	fmt = fmt % tuple(range(offset, offset + num_reads))
+
+	if max_length is not None:
+		fmt *= max_length / len(fmt)
 
 	if round_to is not None:
 		fmt += pad_with * (round_to - (len(fmt) % round_to))
+
 	return fmt
 
 def absolute_string(byte_offset, writes=None, reads=None, read_length = None, current_length=0, pad_to=0, pad_with="_", word_size=4, endness="<"):
@@ -127,24 +145,3 @@ def absolute_string(byte_offset, writes=None, reads=None, read_length = None, cu
 	fmt = format_start + format_end
 	l.debug("... created format strng |%s| of length %s.", fmt, len(fmt))
 	return fmt + pad_with * (pad_to - len(fmt))
-
-#def main():
-#	import sys
-#	l.setLevel(logging.DEBUG)
-#
-#	writes = ((0x45397010, 0x01020304), (0x45397014, 0x11121314))
-#	chunks = chunk(writes, 4, 2)[0:1] + chunk(writes, 4, 1)[2:]
-#
-#	print format_string(chunks, int(sys.argv[1]), 1024, 0)
-#
-#
-#def usage():
-#	print "Super Formatter 64!"
-#	print " Usage: {} <offset> <t|f>".format(sys.argv[0])
-#	sys.exit(1)
-#
-#
-#if __name__ == "__main__":
-#	if len(sys.argv) != 3:
-#		usage()
-#	main()

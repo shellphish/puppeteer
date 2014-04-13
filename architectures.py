@@ -19,7 +19,7 @@ class x86:
 
 class amd64:
 	bits = 64
-	bytes = 4
+	bytes = 8
 	sp_name = 'rsp'
 	ip_name = 'rip'
 	bp_name = 'rbp'
