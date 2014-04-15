@@ -1,7 +1,7 @@
 import copy
 import struct
 
-from .errors import NoobError
+from ..errors import NoobError
 
 class ROPGadget(object):
     '''
