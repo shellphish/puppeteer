@@ -34,7 +34,7 @@ class FindSockModule(ShellcodeModule):
 
 # open(filename)
 class OpenModule(ShellcodeModule):
-    def __init__(self, arch, sockfd, filename, size):
+    def __init__(self, arch, filename):
         pass
 
 # read(fd, size)
