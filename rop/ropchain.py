@@ -96,16 +96,7 @@ class ROPChain(object):
         '''
         Returns the length, in bytes, of the ROP chain.
         '''
-        length = 0
-        for entry in self.chain:
-            if isinstance(entry, str):
-                length += len(entry)
-            elif type(entry) in [ int, long, float ]:
-                length += self.arch.bytes
-            elif isinstance(entry, ROPGadget):
-                length += entry.length * self.arch.bytes
-        return length
-
+        return len(self.build())
     def __len__(self): return self.length()
 
 from .ropgadget import ROPGadget
