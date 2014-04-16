@@ -1,5 +1,16 @@
 import socket
+import select
 import subprocess
+
+import logging
+l = logging.getLogger('puppeteer.Connection')
+
+def rw_alias(f):
+    '''
+    Makes an alias for read/recv and write/send.
+    '''
+    print "CLASS:",f.im_class
+    return f
 
 class Connection(object):
     '''
@@ -18,6 +29,9 @@ class Connection(object):
         self.connect()
 
     def connect(self):
+        '''
+        Connect!
+        '''
         if self.host is not None and self.port is not None:
             self.s = socket.create_connection((self.host, self.port))
         elif self.exe is not None:
@@ -26,48 +40,75 @@ class Connection(object):
             raise Exception("How are we supposed to connect, man?")
 
     def send(self, msg):
+        '''
+        Send the message.
+        '''
         if self.s is not None:
             return self.s.sendall(msg)
         elif self.p is not None:
             return self.p.stdin.write(msg)
-    def write(self, msg): 
-        return self.send(msg)
 
-    def recv(self, n):
-        if self.s is not None:
-            return self.s.recv(n)
-        elif self.p is not None:
-            return self.p.stdout.read(n)
-    def read(self, n):
-        return self.recv(n)
+    def recv(self, n, timeout=None):
+        '''
+        Receive up to n bytes.
+        '''
+        slist = [ self.s if self.s is not None else self.p.stdout ]
+        if timeout is not None:
+            (rlist, _, _) = select.select(slist, [], [], timeout)
+        else:
+            (rlist, _, _) = select.select(slist, [], [])
 
-    # read until the given character
-    def read_til(self, n, c):
+        #print rlist, wlist, xlist
+        if rlist == []:
+            return ""
+        readsock = rlist[0]
+        if type(readsock) == socket.socket:
+            return readsock.recv(n)
+        if type(readsock) == file:
+            return readsock.read(n)
+
+    def read(self, n=None, timeout=None):
+        '''
+        Read exactly n bytes, or all that's available if n is None.
+        '''
+        if n is None:
+            self.read_all(timeout=timeout)
+
+        result = ""
+        while len(result) < n:
+            result += self.recv(n - len(result), timeout=timeout)
+        return result
+
+    # read until the given string
+    def read_until(self, c, max_chars=None, timeout=None):
+        '''
+        Read until the given string.
+        '''
+        #l.debug("Reading until: %s", c)
+
         buf = ""
-        while True:
-            tmp = self.recv(1)
+        while max_chars is None or len(buf) < max_chars:
+            #l.debug("... so far: %s", buf)
+            if c in buf:
+                #l.debug("... found!")
+                break
+            tmp = self.read(1, timeout=timeout)
             if tmp == "":
                 break
             buf += tmp
-            if tmp == c:
-                break
         return buf
 
-    # read with as long as there is reading
-    # and that timeout is not expired
-    def read_all(self, to):
-        if self.s is None:
-            raise Exception("No socket to read_all from")
-        slist = [self.s]
+    def read_all(self, timeout):
+        '''
+        Read as long as there is more stuff and the timeout is not expired.
+        '''
         buff = ""
 
         while True:
-            (rlist, wlist, xlist) = select.select(slist, [], [], to)
-            #print rlist, wlist, xlist
-            if rlist == []:
+            s = self.recv(8192, timeout=timeout)
+            if len(s) == 0:
                 break
-            readsock = rlist[0]
-            buff += readsock.recv(1)
+            buff += s
 
         return buff
 
