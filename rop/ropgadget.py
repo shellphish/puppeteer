@@ -29,42 +29,56 @@ class ROPGadget(object):
     LEAVE_RET = 'LEAVE_RET'
     LEAVE_CALL = 'LEAVE_CALL'
 
-    def __init__(self, addr, pops=None, length=None, movs=None, sets=(), influences=(), clobbers=(), leave=LEAVE_RET, leave_pos=None):
+    def __init__(self, arch, addr, pops=None, length=None, movs=None, clobbers=(), leave=LEAVE_RET, leave_pos=None):
         '''
-        Creates a new ROPGadget. Look at the ROPGadget class docstring for more info.
+        Creates a new ROPGadget.
+
+            @param arch: the architecture of the binary
+            @param addr: the address of the gadget
+            @param pops: a dictionary { 'reg_name': position } of registers that are
+                         popped. The position is their relative position in the rop
+                         chain (i.e., 0 is the first one that's popped).
+            @param length: the length of the rop chain, in architecture-sized words.
+                           Can be automatically determined if omitted.
+            @param movs: a dictionary { 'reg_name': 'reg_name' } of registers that the
+                         gadget moves into each other.
+            @param clobbers: a sequence ( 'reg_name', 'reg_name' ) of registers that
+                             the gadget clobbers.
+            @param leave: the type of exit from the gadget (LEAVE_RET, LEAVE_CALL,
+                          LEAVE_JUMP).
+            @param leave_pos: the position in the gadget where the next address should
+                              be put. By default, the end.
         '''
         self.addr = addr
         self.pops = { } if pops is None else pops
         self.movs = { } if movs is None else movs
-        self.sets = set(sets)
-        self.influences = set(influences)
         self.clobbers = set(clobbers)
         self.leave = leave
         self.leave_pos = leave_pos
+        self.arch = arch
 
-        if length is None and pops is None:
-            self.length = 2
-        elif length is None:
-            self.length = len(pops) + 1
-        else:
-            self.length = length
-
+        self.length = len(self.pops) if length is None else length
         self.args = [ None ] * self.length
+
+    def set(self, *args, **kwargs):
+        for i,a in enumerate(args):
+            self.args[i] = a
+
+        for i in kwargs:
+            if i == 'next_addr':
+                self.args[self.leave_pos] = kwargs[i]
+            else:
+                self.args[self.pops[i]] = kwargs[i]
 
     def __call__(self, *args, **kwargs):
         '''
         Creates a copy of the gadget, with the arguments filled out.
         '''
         c = copy.deepcopy(self)
-        for i in args:
-            c.args[i] = args[i]
-
-        for i in kwargs:
-            c.args[self.pops[i]] = kwargs[i]
-
+        c.set(*args, **kwargs)
         return c
 
-    def build(self, arch=None):
+    def build(self):
         '''
         Converts the ROPGadget into a string, ready to be written to the
         victim program's memory.
@@ -72,74 +86,31 @@ class ROPGadget(object):
         s = ""
         for a in self.args:
             if a is None:
-                s += '\x41' * arch.bytes
+                s += '\x00' * self.arch.bytes
             elif type(a) in [ int, long, float ]:
-                s += struct.pack(arch.struct_fmt, a)
+                s += struct.pack(self.arch.struct_fmt, a)
             else:
-                if len(a) != arch.bytes:
+                if len(a) != self.arch.bytes:
                     raise NoobError("unaligned entry in rop chain?")
                 s += a
         return s
 
-class ROPChain(object):
-    def __init__(self, arch, chain=None, length=None):
-        '''
-        Creates a new ROPChain.
-        '''
-        self.arch = arch
-        self.chain = chain if chain is not None else [ ]
-        self.length = length
+    def __add__(self, other):
+        r = ROPChain(self.arch)
+        r.add(self)
+        r.add(other)
+        return r
 
-    def add(self, entry):
-        '''
-        Adds an entry to the ROP chain. Valid types are:
+    def __radd__(self, other):
+        r = ROPChain(self.arch)
+        r.add(other)
+        r.add(self)
+        return r
 
-            int - converted to N bytes, where N is the architecture byte width
-            None - left as a default value (probably 0x41414141...)
-            str - some string, printed directly. Should be aligned to the byte
-                  width.
-        '''
-        if len(entry) != self.arch.bytes:
-            raise NoobError("unaligned?")
+    def __mul__(self, n):
+        r = ROPChain(self.arch)
+        for _ in range(n):
+            r += self()
+        return r
 
-        self.chain.append(entry)
-
-    def __add__(self, entry):
-        '''
-        Adds two ROPChains together, or adds something to a ROPChain.
-        '''
-        if isinstance(entry, ROPChain):
-            return ROPChain(self.arch, chain=self.chain+entry.chain, length=self.length)
-        else:
-            r = ROPChain(self.arch, chain=self.chain, length=self.length)
-            r.add(entry)
-            return r
-
-    def __iadd__(self, entry):
-        '''
-        Adds to a ROPChain.
-        '''
-        if isinstance(entry, ROPChain):
-            self.chain += entry.chain
-        else:
-            self.add(entry)
-
-        return self
-
-    def build(self):
-        '''
-        Converts the ROPChain to a string, ready to be written to the victim
-        program's memory.
-        '''
-        if self.length is not None and len(self.chain) != self.length:
-            raise NoobError("size doesn't match!")
-
-        s = ""
-        for entry in self.chain:
-            if isinstance(entry, str):
-                s += entry
-            elif type(entry) in [ int, long, float ]:
-                s += struct.pack(self.arch.struct_fmt, entry)
-            elif isinstance(entry, ROPGadget):
-                s += entry.build(self.arch)
-        return s
+from .ropchain import ROPChain

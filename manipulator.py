@@ -10,7 +10,7 @@ import functools
 from .errors import NotLeetEnough
 from .formatter import absolute_string, offset_read
 from .architectures import x86
-from .rop import ROPChain
+from .rop import ROPChain, ROPGadget
 
 def _safe_unsafe(f):
     '''
@@ -403,14 +403,18 @@ class Manipulator:
             p = self.do_page_read(addr)
             self.memory_display(p, addr)
 
-
-
     #
     # ROP stuff
     #
 
-    def new_rop(self, chain=None, length=None):
+    def rop(self, *args, **kwargs):
         '''
         This returns a new ROP chain that you can then add ROP craziness to.
         '''
-        return ROPChain(arch=self.arch, chain=chain, length=length)
+        return ROPChain(arch=self.arch, *args, **kwargs)
+
+    def gadget(self, *args, **kwargs):
+        '''
+        This returns a new ROPGadget (and takes the same args as ROPGadget).
+        '''
+        return ROPGadget(self.arch, *args, **kwargs)

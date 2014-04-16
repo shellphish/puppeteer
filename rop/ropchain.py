@@ -1,16 +1,18 @@
+import logging
+l = logging.getLogger('puppeteer.rop.ropchain')
+
 import struct
 
 from ..errors import NoobError
-from . import ROPGadget
 
 class ROPChain(object):
-    def __init__(self, arch, chain=None, length=None):
+    def __init__(self, arch, chain=None, expected_length=None):
         '''
         Creates a new ROPChain.
         '''
         self.arch = arch
         self.chain = chain if chain is not None else [ ]
-        self.length = length
+        self.expected_length = expected_length
 
     def add(self, entry):
         '''
@@ -21,8 +23,14 @@ class ROPChain(object):
             str - some string, printed directly. Should be aligned to the byte
                   width.
         '''
-        if len(entry) != self.arch.bytes:
-            raise NoobError("unaligned?")
+        if isinstance(entry, str) and len(entry) % self.arch.bytes != 0:
+            raise NoobError("%d-byte ROP entry in a %d-bit architecture!" % (len(entry), self.arch.bytes))
+
+        if len(self.chain) > 0 and isinstance(self.chain[-1], ROPGadget) and self.chain[-1].leave != ROPGadget.LEAVE_RET is not None:
+            if isinstance(entry, ROPGadget):
+                self.chain[-1].set(next_addr = entry.addr)
+            else:
+                l.warning("Non-ret ROPGadget followed by a non-gadget")
 
         self.chain.append(entry)
 
@@ -31,10 +39,22 @@ class ROPChain(object):
         Adds two ROPChains together, or adds something to a ROPChain.
         '''
         if isinstance(entry, ROPChain):
-            return ROPChain(self.arch, chain=self.chain+entry.chain, length=self.length)
+            return ROPChain(self.arch, chain=self.chain+entry.chain, expected_length=self.expected_length)
         else:
-            r = ROPChain(self.arch, chain=self.chain, length=self.length)
+            r = ROPChain(self.arch, chain=self.chain, expected_length=self.expected_length)
             r.add(entry)
+            return r
+
+    def __radd__(self, entry):
+        '''
+        Adds two ROPChains together, or adds something to a ROPChain.
+        '''
+        if isinstance(entry, ROPChain):
+            return ROPChain(self.arch, chain=entry.chain+self.chain, expected_length=self.expected_length)
+        else:
+            r = ROPChain(self.arch, expected_length=self.expected_length)
+            r.add(entry)
+            r.chain += self.chain
             return r
 
     def __iadd__(self, entry):
@@ -53,8 +73,10 @@ class ROPChain(object):
         Converts the ROPChain to a string, ready to be written to the victim
         program's memory.
         '''
-        if self.length is not None and len(self.chain) != self.length:
+        if self.expected_length is not None and self.length() != self.expected_length:
             raise NoobError("size doesn't match!")
+
+        did_ret = True
 
         s = ""
         for entry in self.chain:
@@ -63,5 +85,27 @@ class ROPChain(object):
             elif type(entry) in [ int, long, float ]:
                 s += struct.pack(self.arch.struct_fmt, entry)
             elif isinstance(entry, ROPGadget):
-                s += entry.build(self.arch)
+                if did_ret:
+                    s += struct.pack(self.arch.struct_fmt, entry.addr)
+
+                s += entry.build()
+                did_ret = entry.leave == ROPGadget.LEAVE_RET
         return s
+
+    def length(self):
+        '''
+        Returns the length, in bytes, of the ROP chain.
+        '''
+        length = 0
+        for entry in self.chain:
+            if isinstance(entry, str):
+                length += len(entry)
+            elif type(entry) in [ int, long, float ]:
+                length += self.arch.bytes
+            elif isinstance(entry, ROPGadget):
+                length += entry.length * self.arch.bytes
+        return length
+
+    def __len__(self): return self.length()
+
+from .ropgadget import ROPGadget
