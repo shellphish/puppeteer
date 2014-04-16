@@ -38,7 +38,7 @@ class Connection(object):
             return self.s.recv(n)
         elif self.p is not None:
             return self.p.stdout.read(n)
-    def read(self, n): 
+    def read(self, n):
         return self.recv(n)
 
     # read until the given character
