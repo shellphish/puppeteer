@@ -63,16 +63,14 @@ def register_write_flags(safe=True, priority=None):
 def printf(f):
     return printf_flags()(f)
 
-def printf_flags(safe=True, blind=False, max_fmt_size=None, max_output_size=None, bytes_to_fmt=None, priority=None):
+def printf_flags(safe=True, priority=None, blind=False, word_offset=None, max_length=None, byte_offset=None, num_written=None, prefix=None, pad_length=None, pad_round=None, pad_char=None):
     def decorator(f):
         flags = {
             'type':'printf',
             'priority':priority,
             'safe':safe,
             'blind':blind,
-            'max_fmt_size':max_fmt_size,
-            'max_output_size':max_output_size,
-            'bytes_to_fmt':bytes_to_fmt
+            'fmt_flags': { 'word_offset':word_offset, 'max_length':max_length, 'byte_offset':byte_offset, 'num_written':num_written, 'prefix':prefix, 'pad_length':pad_length, 'pad_round':pad_round, 'pad_char':pad_char }
         }
         setattr(f, 'puppeteer_flags', flags)
         return f

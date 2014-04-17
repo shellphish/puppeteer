@@ -3,12 +3,12 @@ l = logging.getLogger("puppeteer.manipulator")
 
 import abc
 import struct
-import string # pylint: disable=deprecated-module
+import string # pylint: disable=W0402
 import itertools
 import functools
 
 from .errors import NotLeetEnough
-from .formatter import absolute_string, offset_read
+from .formatter import FmtStr
 from .architectures import x86
 from .rop import ROPChain, ROPGadget
 
@@ -142,7 +142,7 @@ class Manipulator:
     @_safe_unsafe
     def do_register_read(self, reg, safe=None):
         ''' Finds and executes an vuln that does a register read. '''
-        return self._do_vuln('register_read', (reg,), { }, safe=True)
+        return self._do_vuln('register_read', (reg,), { }, safe=safe)
 
     @_safe_unsafe
     def do_memory_write(self, addr, content, safe=None):
@@ -155,12 +155,12 @@ class Manipulator:
             l.debug("... just can't do it, captain!")
 
         l.debug("Now trying a naive printf write.")
-        return self.do_printf_write((addr, content), safe=None)
+        return self.do_printf_write((addr, content), safe=safe)
 
     @_safe_unsafe
     def do_register_write(self, reg, content, safe=None):
         ''' Finds and executes an vuln that does a register write. '''
-        return self._do_vuln('register_write', (reg, content), { }, safe=True)
+        return self._do_vuln('register_write', (reg, content), { }, safe=safe)
 
     @_safe_unsafe
     def do_printf(self, fmt, safe=None):
@@ -170,7 +170,7 @@ class Manipulator:
         @param fmt: the format string!
         @param safe: safety!
         '''
-        return self._do_vuln('printf', (fmt,), { }, safe=None)
+        return self._do_vuln('printf', (fmt,), { }, safe=safe)
 
     @_safe_unsafe
     def do_printf_read(self, addr, length, safe=None):
@@ -191,7 +191,7 @@ class Manipulator:
             left_length = length - len(content)
 
             for f in funcs:
-                fmt = absolute_string(f.puppeteer_flags['bytes_to_fmt'], reads=(cur_addr,), read_length=left_length, pad_to=f.puppeteer_flags['max_fmt_size'], pad_with="_", word_size=self.arch.bytes, endness=self.arch.endness)
+                fmt = FmtStr(self.arch, **f.puppeteer_flags['fmt_flags']).absolute_read(cur_addr).build()
                 try:
                     l.debug("... trying format string %s through %s.", fmt, f.func_name)
                     # FIXME: this might be cutting off to much. Do it intelligently
@@ -225,9 +225,9 @@ class Manipulator:
         funcs = self._get_vulns('printf', safe)
         chunks = [ (writes[0]+i, j) for i,j in enumerate(writes[1]) ]
 
-        for c in chunks:
+        for addr, buff in chunks:
             for f in funcs:
-                fmt = absolute_string(f.puppeteer_flags['bytes_to_fmt'], writes=(c,), pad_to=f.puppeteer_flags['max_fmt_size'], word_size=self.arch.bytes, endness=self.arch.endness)
+                fmt = FmtStr(self.arch, **f.puppeteer_flags['fmt_flags']).absolute_write(addr, buff).build()
                 try:
                     l.debug("Trying format string through %s.", f.func_name)
                     f(fmt)
@@ -249,10 +249,9 @@ class Manipulator:
             funcs = self._get_vulns('printf', safe)
             for f in funcs:
                 result = ""
-                max_i = (length + self.arch.bytes - 1) / self.arch.bytes
                 while len(result) < length:
-                    fmt = offset_read(offset/self.arch.bytes + len(result)/(self.arch.bytes*2), self.arch.bytes*2, max_length=f.puppeteer_flags['max_fmt_size'], max_offset=max_i, round_to=self.arch.bytes, pad_with='_')
-                    result += f(fmt).replace('_', '')
+                    fmt = FmtStr(self.arch, **f.puppeteer_flags['fmt_flags']).relative_read(offset/self.arch.bytes, length/self.arch.bytes)
+                    result += f(fmt.build()).replace(fmt.pad_char, '')
 
             return self.fix_endness_strided(result.decode('hex'))
 
@@ -265,7 +264,7 @@ class Manipulator:
             which = self.got_names.index(which)
         return self.do_memory_read(self.got_base+which*self.arch.bytes, self.arch.bytes, safe=safe)
 
-    def dump_got(self, which, safe=None):
+    def dump_got(self, safe=None):
         return self.do_memory_read(self.got_base, self.got_size*self.arch.bytes, safe=safe)
 
     def do_page_read(self, addr):
@@ -308,8 +307,7 @@ class Manipulator:
 
         for i in itertools.count(start=start_offset):
             l.debug("... checking offset %d", i)
-            fmt = offset_read(i, self.arch.bytes*2, max_offset=10000, round_to=self.arch.bytes, pad_with='_')
-            v = struct.unpack(">" + self.arch.struct_char, self.do_printf(fmt).replace('_', '').decode('hex'))[0]
+            v = struct.unpack(">" + self.arch.struct_char, self.do_relative_read(i*self.arch.bytes, self.arch.bytes))[0]
             if v >= self.locations['main'] and v <= self.locations['#main_end']:
                 l.debug("... found the return address to main (specifically, to 0x%x) at offset %d!", v, i)
                 break
@@ -317,8 +315,7 @@ class Manipulator:
         i += 3 + self.info['main_stackframe_size'] / self.arch.bytes # pylint: disable=undefined-loop-variable
         l.debug("... the return address into __libc_start_main should be at offset %d", i)
 
-        fmt = offset_read(i, self.arch.bytes*2, max_offset=10000, round_to=self.arch.bytes, pad_with='_')
-        v = struct.unpack(">" + self.arch.struct_char, self.do_printf(fmt).replace('_', '').decode('hex'))[0]
+        v = struct.unpack(">" + self.arch.struct_char, self.do_relative_read(i*self.arch.bytes, self.arch.bytes))[0]
         return v
 
     #

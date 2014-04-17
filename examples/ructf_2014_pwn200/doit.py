@@ -17,7 +17,7 @@ class Aggravator(puppeteer.Manipulator):
         self.f = self.s.makefile()
         puppeteer.read_until(self.s, "> ")
 
-    @puppeteer.printf_flags(bytes_to_fmt=244, max_fmt_size=31)
+    @puppeteer.printf_flags(byte_offset=244, max_length=31)
     def stats_printf(self, fmt):
         self.s.sendall("stats " + fmt + "\n")
         puppeteer.read_until(self.s, "kill top:\n")
