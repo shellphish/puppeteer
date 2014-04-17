@@ -26,6 +26,8 @@ def _safe_unsafe(f):
             except NotLeetEnough:
                 kwargs['safe'] = False
                 return f(*args, **kwargs)
+        else:
+            return f(*args, **kwargs)
 
     return wrapper
 
@@ -92,11 +94,15 @@ class Manipulator:
                     unsafe_vulns.append(f)
 
         if safe is None:
-            return vulns + unsafe_vulns
+            r = vulns + unsafe_vulns
         elif safe:
-            return vulns
+            r = vulns
         elif not safe:
-            return unsafe_vulns
+            r = unsafe_vulns
+
+        if len(r) == 0:
+            raise NotLeetEnough("Couldn't find a %s vuln with safe=%s (others might have been tried and failed previously)" % (t, safe))
+        return r
 
     def _do_vuln(self, vuln_type, args, kwargs, safe=None):
         funcs = self._get_vulns(vuln_type, safe)
@@ -170,45 +176,68 @@ class Manipulator:
         @param fmt: the format string!
         @param safe: safety!
         '''
-        return self._do_vuln('printf', (fmt,), { }, safe=safe)
+        funcs = self._get_vulns('printf', safe)
+
+        for f in funcs:
+            try:
+                l.debug("Trying function %s", f.func_name)
+                if isinstance(fmt, FmtStr):
+                    fmt.set_flags(**f.puppeteer_flags['fmt_flags'])
+                    result = f(fmt.build())
+                    if len(result) < fmt.before_absolute_reads:
+                        return ""
+                    else:
+                        result = result[fmt.before_absolute_reads:].rstrip(fmt.pad_char)
+                    return result
+                elif isinstance(fmt, str):
+                    return f(fmt)
+                else:
+                    raise Exception("Unrecognized format string type. Please provide FmtStr or str")
+            except NotLeetEnough:
+                l.debug("... failed!")
+
+        l.debug("Couldn't find an appropriate vuln :-(")
+        raise NotLeetEnough("No %s%s functions available!" % (('safe ' if safe is True else ('unsafe ' if self is False else '')), 'printf'))
 
     @_safe_unsafe
-    def do_printf_read(self, addr, length, safe=None):
+    def do_printf_read(self, addr, length, max_failures=10, safe=None):
         '''
         Do a printf-based memory read.
 
         @param addr: the address
+        @param length: the number of bytes to read
+        @param default_char: if something can't be read (for example, because
+                             of bad chars in the format string), replace it
+                             with this
+        @param max_failures: the maximum number of consecutive failures before
+                             giving up.
         @param safe: safety
         '''
-
-        funcs = self._get_vulns('printf', safe)
-
         l.debug("Reading %d bytes from 0x%x using printf", length, addr)
+
+        max_failures = length if max_failures is None else length
+        failures = 0
 
         content = ""
         while len(content) < length:
             cur_addr = addr + len(content)
             left_length = length - len(content)
+            fmt = FmtStr(self.arch).absolute_read(cur_addr)
 
-            for f in funcs:
-                fmt = FmtStr(self.arch, **f.puppeteer_flags['fmt_flags']).absolute_read(cur_addr).build()
-                try:
-                    l.debug("... trying format string %s through %s.", fmt, f.func_name)
-                    # FIXME: this might be cutting off to much. Do it intelligently
-                    new_content = f(fmt)[self.arch.bytes:-fmt.count("_")]
-                    content += new_content
-                    l.debug("... got: %s (length %d)", new_content, len(new_content))
-                    if f.puppeteer_flags['max_output_size'] is not None:
-                        l.debug("... expected %d bytes", min(f.puppeteer_flags['max_output_size'], left_length))
+            try:
+                new_content = self.do_printf(fmt, safe=safe)[:left_length]
+            except NotLeetEnough:
+                failures += 1
+                content += '\00'
+                continue
 
-                    if len(new_content) < left_length:
-                        if not f.puppeteer_flags['max_output_size'] or len(new_content) < f.puppeteer_flags['max_output_size']:
-                            l.debug("... skipping null byte")
-                            # probably was null-terminated
-                            content += '\0'
-                    break
-                except NotLeetEnough:
-                    l.debug("... failed")
+            content += new_content
+            if len(new_content) == 0:
+                l.debug("... potential null byte")
+                content += '\x00'
+
+            if failures > max_failures:
+                raise NotLeetEnough("do_printf_read hit more than %d consecutive failures", max_failures)
 
         return content
 
@@ -222,20 +251,9 @@ class Manipulator:
         '''
 
         # this is an overwrite of a set of bytes. We don't care about the output.
-        funcs = self._get_vulns('printf', safe)
         chunks = [ (writes[0]+i, j) for i,j in enumerate(writes[1]) ]
-
-        for addr, buff in chunks:
-            for f in funcs:
-                fmt = FmtStr(self.arch, **f.puppeteer_flags['fmt_flags']).absolute_write(addr, buff).build()
-                try:
-                    l.debug("Trying format string through %s.", f.func_name)
-                    f(fmt)
-                    break
-                except NotLeetEnough:
-                    l.debug("... failed")
-
-        return ""
+        fmt = FmtStr(self.arch).absolute_writes(chunks)
+        return self.do_printf(fmt, safe=safe)
 
     @_safe_unsafe
     def do_relative_read(self, offset, length, reg=None, safe=None):
@@ -246,12 +264,10 @@ class Manipulator:
             if reg != self.arch.sp_name:
                 raise
 
-            funcs = self._get_vulns('printf', safe)
-            for f in funcs:
-                result = ""
-                while len(result) < length:
-                    fmt = FmtStr(self.arch, **f.puppeteer_flags['fmt_flags']).relative_read(offset/self.arch.bytes, length/self.arch.bytes)
-                    result += f(fmt.build()).replace(fmt.pad_char, '')
+            result = ""
+            while len(result) < length:
+                fmt = FmtStr(self.arch).relative_read(offset/self.arch.bytes, length/self.arch.bytes)
+                result += self.do_printf(fmt, safe=safe)
             return self.fix_endness_strided(result.decode('hex'))
 
     #
@@ -306,7 +322,6 @@ class Manipulator:
 
         for i in itertools.count(start=start_offset):
             l.debug("... checking offset %d", i)
-            print "GOT: |"+repr(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))+"|"
             v = self.unpack(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))
             if v >= self.locations['main'] and v <= self.locations['#main_end']:
                 l.debug("... found the return address to main (specifically, to 0x%x) at offset %d!", v, i)
@@ -317,6 +332,35 @@ class Manipulator:
 
         v = self.unpack(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))
         return v
+
+    def dump_pageset(self, addr):
+        '''
+        Dumps a page at the given address, along with any adjacent page that
+        pointers are found to. The idea is to use this to dump libraries.
+        '''
+        addr -= addr % self.arch.page_size
+
+        pages = { }
+        queue = [ addr ]
+        l.info("Dumping pages around 0x%x", addr)
+
+        while len(queue) != 0:
+            a = queue.pop()
+            l.info("... dumping page 0x%x", a)
+            pages[a] = self.do_memory_read(a, self.arch.page_size)
+
+            # TODO: the following only works on, at best, static binaries
+            # that we just don't have locally. It won't work for things
+            # that use relative jumps (almost everything). For that,
+            # we should really disassemble the dumped page...
+            if self.pack(a - self.arch.page_size) in pages[a]:
+                l.info("... 0x%x found!", a - self.arch.page_size)
+                queue.append(a - self.arch.page_size)
+            if self.pack(a + self.arch.page_size) in pages[a]:
+                l.info("... 0x%x found!", a + self.arch.page_size)
+                queue.append(a + self.arch.page_size)
+
+        return pages
 
     #
     # Crazy UI

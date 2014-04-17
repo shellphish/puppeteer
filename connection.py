@@ -4,6 +4,7 @@ import subprocess
 
 import logging
 l = logging.getLogger('puppeteer.Connection')
+#l.setLevel(logging.DEBUG)
 
 def rw_alias(f):
     '''
@@ -52,6 +53,7 @@ class Connection(object):
         '''
         Receive up to n bytes.
         '''
+        l.debug("recv(%d, timeout=%s)", n, timeout)
         slist = [ self.s if self.s is not None else self.p.stdout ]
         if timeout is not None:
             (rlist, _, _) = select.select(slist, [], [], timeout)
@@ -60,12 +62,16 @@ class Connection(object):
 
         #print rlist, wlist, xlist
         if rlist == []:
+            l.debug("TIMEOUT")
             return ""
         readsock = rlist[0]
         if type(readsock) == socket.socket:
-            return readsock.recv(n)
+            r = readsock.recv(n)
         if type(readsock) == file:
-            return readsock.read(n)
+            r = readsock.read(n)
+
+        #l.debug("Got: %s", repr(r))
+        return r
 
     def read(self, n=None, timeout=None):
         '''
@@ -76,7 +82,11 @@ class Connection(object):
 
         result = ""
         while len(result) < n:
-            result += self.recv(n - len(result), timeout=timeout)
+            tmp = self.recv(n - len(result), timeout=timeout)
+            if tmp == "" and timeout is not None:
+                break
+            result += tmp
+
         return result
 
     # read until the given string
@@ -92,7 +102,7 @@ class Connection(object):
             if c in buf:
                 #l.debug("... found!")
                 break
-            tmp = self.read(1, timeout=timeout)
+            tmp = self.recv(1, timeout=timeout)
             if tmp == "":
                 break
             buf += tmp

