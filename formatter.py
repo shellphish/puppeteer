@@ -11,7 +11,7 @@ class FmtStr(object):
 		self.arch = arch
 		self.offset = word_offset * self.arch.bytes if byte_offset is None else byte_offset
 		self.prefix = "" if prefix is None else prefix
-		self.pad_length = pad_length
+		self.pad_length = max_length if pad_length is None else pad_length
 		self.pad_round = pad_round
 		self.pad_char = "_" if pad_char is None else pad_char
 		self.max_length = max_length
@@ -28,6 +28,7 @@ class FmtStr(object):
 		self._undos = [ ]
 
 	def absolute_write(self, addr, buff):
+		l.debug("Format string adding absolute write of %s to 0x%x", repr(buff), addr)
 		self._absolute_writes.append((addr, buff))
 		return self
 	def absolute_writes(self, writes):
@@ -36,6 +37,7 @@ class FmtStr(object):
 		return self
 
 	def absolute_read(self, addr):
+		l.debug("Format string adding absolute read of %s", addr)
 		self._absolute_reads.append(addr)
 		return self
 	def absolute_reads(self, reads):
@@ -44,6 +46,7 @@ class FmtStr(object):
 		return self
 
 	def relative_read(self, offset=None, count=1):
+		l.debug("Format string adding relative read of %d words from offset %d", count, self._idx if offset is None else offset)
 		self._relative_reads.append((offset, count))
 		return self
 	def relative_reads(self, reads):
@@ -52,6 +55,7 @@ class FmtStr(object):
 		return self
 
 	def pointed_write(self, offset, buff):
+		l.debug("Format string adding pointed write of %s through offset", repr(buff), offset)
 		self._pointed_writes.append((offset, buff))
 		return self
 	def relative_writes(self, writes):

