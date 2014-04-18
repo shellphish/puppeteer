@@ -131,7 +131,7 @@ class FmtStr(object):
 		try:
 			self._printed += len(s % ())
 			self._fmt += s
-		except TypeError:
+		except (TypeError, ValueError):
 			unleet("Format string literal %r includes format string!" % s)
 
 	def _next_offset(self):
