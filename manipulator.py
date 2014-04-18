@@ -73,6 +73,9 @@ class Manipulator(object):
         if type(n) == str:
             return struct.unpack(self.arch.struct_fmt, n)[0]
 
+    def new_fmt(self):
+        return FmtStr(arch=self.arch)
+
     def _get_vulns(self, t, safe):
         vulns = [ ]
         unsafe_vulns = [ ]
@@ -298,7 +301,7 @@ class Manipulator(object):
         '''
         self.do_memory_write(self.plt[name], self.pack(target), safe=safe)
 
-    def read_stack(self, length):
+    def dump_stack(self, length):
         '''
         Read the stack, from the current stack pointer (or something close), to sp+length
 
@@ -378,6 +381,16 @@ class Manipulator(object):
         return pages
 
     def dump_libc(self, filename, start_offset=None):
+        '''
+        Dumps libc, starting either from the page containing __libc_start_main
+        or some other GOT-mapped function and working backwards to the
+        beginning.
+
+        @param filename: the filename to save the leaked bytes to
+        @param start_offset: the offset (on the stack) at which to start
+                             scanning for the return from main. Default:
+                             start from lowest point on stack.
+        '''
         libc_addr = self.main_return_address(start_offset=start_offset)
         libc_contents = self.dump_elf(libc_addr)
         open(filename, "w").write("".join([ libc_contents[k] for k in sorted(libc_contents.keys()) ]))

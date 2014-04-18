@@ -15,6 +15,7 @@ class FmtStr(object):
 		self._absolute_writes = [ ]
 		self._relative_reads = [ ]
 		self._pointed_writes = [ ]
+		self._pointed_reads = [ ]
 
 		# initialize stuff that will be set later
 		self.offset = None
@@ -84,13 +85,21 @@ class FmtStr(object):
 		return self
 
 	def pointed_write(self, offset, buff):
-		l.debug("Format string adding pointed write of %s through offset", repr(buff), offset)
+		l.debug("Format string adding pointed write of %s through offset %d", repr(buff), offset)
 		self._pointed_writes.append((offset, buff))
 		return self
-	def relative_writes(self, writes):
+	def pointed_writes(self, writes):
 		for offset, buff in writes:
 			self.pointed_write(offset, buff)
 		return self
+
+	def pointed_read(self, offset):
+		l.debug("Format string adding pointed read through offset %d", offset)
+		self._pointed_reads.append(offset)
+		return self
+	def pointed_reads(self, reads):
+		for offset in reads:
+			self.pointed_read(offset)
 
 	#
 	# Internal functions below
@@ -157,15 +166,20 @@ class FmtStr(object):
 			for i in range(count):
 				self._do_relative_read(offset + i)
 
-	def _do_absolute_writes(self):
-		self._pad_to_offset()
-		addr_offset = self._next_offset()
-		l.debug("... initial addr offset: %d", addr_offset)
-		self._add_literal("".join(struct.pack(self.arch.struct_fmt, t) for t, _ in self._absolute_writes))
+	def _do_writes(self, writes, absolute=True):
+		if absolute:
+			self._pad_to_offset()
+			addr_offset = self._next_offset()
+
+			l.debug("... initial addr offset: %d", addr_offset)
+			self._add_literal("".join(struct.pack(self.arch.struct_fmt, t) for t, _ in writes))
+			offsets = range(addr_offset, addr_offset + len(writes))
+		else:
+			offsets = zip(*writes)[0]
 
 		modifiers = { 1: "hh", 2: "h", 4: "", 8: "ll" }
 		struct_fmts = { 1: "B", 2: "H", 4: "I", 8: "Q" }
-		for n,(t,c) in enumerate(self._absolute_writes):
+		for o,(t,c) in zip(offsets, writes):
 			l.debug("... adding write to 0x%x of size %d", t, len(c))
 			v = struct.unpack(self.arch.endness + struct_fmts[len(c)], c)[0]
 			next_length = (v - self._printed) % (256 ** len(c))
@@ -181,17 +195,23 @@ class FmtStr(object):
 				self._fmt += "%{:d}x".format(next_length)
 			self._printed += next_length
 	
-			self._fmt += "%{:d}${:s}n".format(addr_offset + n, modifiers[len(c)])
+			self._fmt += "%{:d}${:s}n".format(o, modifiers[len(c)])
 	
-	def _do_absolute_reads(self):
-		self._pad_to_offset()
-		addr_offset = self._next_offset()
-		self._add_literal("".join(struct.pack(self.arch.struct_fmt, t) for t in self._absolute_reads))
-		self.literal_length = self._printed
+	def _do_reads(self, reads, absolute=True):
+		if absolute:
+			self._pad_to_offset()
+			addr_offset = self._next_offset()
 
-		for n in range(len(self._absolute_reads)):
-			self._fmt += "%{:d}$s".format(addr_offset + n)
-	
+			self._add_literal("".join(struct.pack(self.arch.struct_fmt, t) for t in self._absolute_reads))
+			self.literal_length = self._printed
+			offsets = range(addr_offset, addr_offset + len(reads))
+		else:
+			self.literal_length = self._printed
+			offsets = reads
+
+		for o in offsets:
+			self._fmt += "%{:d}$s".format(o)
+
 	def build(self, flags=None):
 		l.debug("Starting format string build...")
 		if flags is not None:
@@ -204,9 +224,13 @@ class FmtStr(object):
 		if len(self._relative_reads) > 0:
 			self._do_relative_reads()
 		if len(self._absolute_writes) > 0:
-			self._do_absolute_writes()
+			self._do_writes(self._absolute_writes)
 		if len(self._absolute_reads) > 0:
-			self._do_absolute_reads()
+			self._do_reads(self._absolute_reads)
+		if len(self._pointed_writes) > 0:
+			self._do_writes(self._pointed_writes, absolute=False)
+		if len(self._pointed_reads) > 0:
+			self._do_reads(self._pointed_reads, absolute=False)
 
 		self._pad_end()
 

