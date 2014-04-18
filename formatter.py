@@ -6,7 +6,7 @@ l = logging.getLogger("puppeteer.formatter")
 
 import struct
 
-from .errors import NotLeetEnough
+from .utils import unleet
 
 class FmtStr(object):
 	def __init__(self, arch, **kwargs):
@@ -24,19 +24,20 @@ class FmtStr(object):
 		self.pad_char = None
 		self.max_length = None
 		self.forbidden = None
+		self.forbidden_literal = None
 		self.num_written = None
 		self._fmt = None
 		self._idx = None
 		self._printed = None
-		self._undos = None
-		self.before_absolute_reads = None
+		self.literal_length = None
+		self.padding_amount = None
 
 		# and set it
 		if len(kwargs) > 0:
 			self.set_flags(**kwargs)
 			self._clear_string()
 
-	def set_flags(self, word_offset=None, max_length=None, byte_offset=None, num_written=None, prefix=None, pad_length=None, pad_round=None, pad_char=None, forbidden=None):
+	def set_flags(self, word_offset=None, max_length=None, byte_offset=None, num_written=None, prefix=None, pad_length=None, pad_round=None, pad_char=None, forbidden=None, forbidden_literal=None):
 		self.offset = word_offset * self.arch.bytes if byte_offset is None else byte_offset
 		self.prefix = "" if prefix is None else prefix
 		self.pad_length = max_length if pad_length is None else pad_length
@@ -44,6 +45,7 @@ class FmtStr(object):
 		self.pad_char = "_" if pad_char is None else pad_char
 		self.max_length = max_length
 		self.forbidden = set() if forbidden is None else forbidden
+		self.forbidden_literal = set() if forbidden_literal is None else forbidden_literal
 		self.num_written = num_written
 
 	def _clear_string(self):
@@ -51,8 +53,8 @@ class FmtStr(object):
 		self._fmt = ""
 		self._idx = 1
 		self._printed = 0 if self.num_written is None else self.num_written
-		self._undos = [ ]
-		self.before_absolute_reads = 0
+		self.literal_length = 0
+		self.padding_amount = 0
 
 	def absolute_write(self, addr, buff):
 		l.debug("Format string adding absolute write of %s to 0x%x", repr(buff), addr)
@@ -98,15 +100,13 @@ class FmtStr(object):
 		'''
 		Pads the start of the format string to the proper offset.
 		'''
-		self._fmt = self.prefix
-		self._fmt += self.pad_char * ((-(self.offset + len(self._fmt))) % self.arch.bytes)
+		self._add_literal(self.prefix)
+		self._add_literal(self.pad_char * ((-(self.offset + len(self._fmt))) % self.arch.bytes))
 		self._pad_to_offset()
-		self._printed = len(self._fmt)
 
 	def _pad_to_offset(self):
 		topad = (-(len(self._fmt) + self.offset)) % self.arch.bytes
-		self._fmt += self.pad_char * topad
-		self._printed += topad
+		self._add_literal(self.pad_char * topad)
 
 	def _pad_end(self):
 		'''
@@ -120,8 +120,19 @@ class FmtStr(object):
 			topad = 0
 
 		topad = max(topad, 0)
-		self._fmt += self.pad_char * topad
-		self._printed += topad
+		self._add_literal(self.pad_char * topad)
+		self.padding_amount = topad
+
+	def _add_literal(self, s):
+		for c in self.forbidden_literal:
+			if c in s:
+				unleet("Forbidden characters (%r) in packed address in format string." % c)
+
+		try:
+			self._printed += len(s % ())
+			self._fmt += s
+		except TypeError:
+			unleet("Format string literal %r includes format string!" % s)
 
 	def _next_offset(self):
 		'''
@@ -131,14 +142,7 @@ class FmtStr(object):
 		l.debug("... calculating offset (%d + %d)/%d", self.offset, len(self._fmt), self.arch.bytes)
 		return (self.offset + len(self._fmt)) / self.arch.bytes # why not +1 here?
 
-	def _undo(self):
-		self._fmt, self._idx = self._undos.pop()
-
-	def _checkpoint(self):
-		self._undos.append((self._fmt, self._idx))
-
 	def _do_relative_read(self, offset):
-		self._checkpoint()
 		offset = self._idx if offset is None else offset
 
 		sized_x = "0%dx" % (self.arch.bytes*2)
@@ -154,13 +158,10 @@ class FmtStr(object):
 				self._do_relative_read(offset + i)
 
 	def _do_absolute_writes(self):
-		self._checkpoint()
-
 		self._pad_to_offset()
 		addr_offset = self._next_offset()
 		l.debug("... initial addr offset: %d", addr_offset)
-		self._fmt += "".join(struct.pack(self.arch.struct_fmt, t) for t, _ in self._absolute_writes)
-		self._printed += self.arch.bytes * len(self._absolute_writes)
+		self._add_literal("".join(struct.pack(self.arch.struct_fmt, t) for t, _ in self._absolute_writes))
 
 		modifiers = { 1: "hh", 2: "h", 4: "", 8: "ll" }
 		struct_fmts = { 1: "B", 2: "H", 4: "I", 8: "Q" }
@@ -183,13 +184,10 @@ class FmtStr(object):
 			self._fmt += "%{:d}${:s}n".format(addr_offset + n, modifiers[len(c)])
 	
 	def _do_absolute_reads(self):
-		self._checkpoint()
-
 		self._pad_to_offset()
 		addr_offset = self._next_offset()
-		self._fmt += "".join(struct.pack(self.arch.struct_fmt, t) for t in self._absolute_reads)
-		self._printed += self.arch.bytes * len(self._absolute_reads)
-		self.before_absolute_reads += self.arch.bytes * len(self._absolute_reads)
+		self._add_literal("".join(struct.pack(self.arch.struct_fmt, t) for t in self._absolute_reads))
+		self.literal_length = self._printed
 
 		for n in range(len(self._absolute_reads)):
 			self._fmt += "%{:d}$s".format(addr_offset + n)
@@ -208,22 +206,16 @@ class FmtStr(object):
 		if len(self._absolute_writes) > 0:
 			self._do_absolute_writes()
 		if len(self._absolute_reads) > 0:
-			self.before_absolute_reads = self._printed
 			self._do_absolute_reads()
-
-		#while self.max_length is not None and len(self._fmt) > self.max_length:
-		#	self._undo()
 
 		self._pad_end()
 
 		for f in self.forbidden:
 			if f in self._fmt:
-				l.warning("Forbidden characters in format string!")
-				raise NotLeetEnough("Forbidden characters in format string.")
+				unleet("Forbidden characters (%r) in format string." % f)
 
 		if self.max_length and len(self._fmt) > self.max_length:
-			l.warning("Format string too long (%d/%d)!", len(self._fmt), self.max_length)
-			raise NotLeetEnough("Format string too long (%d/%d)!" % (len(self._fmt), self.max_length))
+			raise unleet("Format string too long (%d/%d)!" % (len(self._fmt), self.max_length))
 
 		l.debug("... created format strng |%s| of length %s.", repr(self._fmt), len(self._fmt))
 		return self._fmt
