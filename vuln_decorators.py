@@ -36,10 +36,12 @@ def exploit_runner(f, flags):
             self.connect()
         try:
             return f(self, *args, **kwargs)
-        except FUBARed:
-            if self._implemented_connect():
-                self.connected = False
-            unleet("FUBARed!")
+        except FUBARed as e:
+            self._crash()
+            raise NotLeetEnough("FUBARed: %s" % e)
+        except ConnectionFail as e:
+            self._disconnect()
+            raise NotLeetEnough("ConnectionFail: %s" % e)
 
     setattr(runner, 'puppeteer_flags', flags)
     return runner
@@ -82,9 +84,10 @@ def printf(blind=False, max_output_size=None, word_offset=None, max_length=None,
                     priority=priority)
     return lambda f: exploit_runner(f, flags)
 
-def stack_overflow(ip_distance=None, canary_distance=None, bp_distance=None,
+def stack_overflow(ip_offset=None, canary_offset=None, bp_offset=None,
+                   nocrash_str=None, nocrash_func=None, pad_char='_',
                    priority=None):
-    flags = make_flags(type='stack_overflow', canary_distance=canary_distance, ip_distance=ip_distance, bp_distance=bp_distance,
+    flags = make_flags(type='stack_overflow', canary_offset=canary_offset, ip_offset=ip_offset, bp_offset=bp_offset, nocrash_str=nocrash_str, nocrash_func=nocrash_func, pad_char=pad_char,
                     priority=priority)
     return lambda f: exploit_runner(f, flags)
 
@@ -110,5 +113,5 @@ def disconnects(f):
     #if hasattr(f, 'puppeteer_flags'): setattr(disconnector, 'puppeteer_flags', f.puppeteer_flags)
     return disconnector
 
-from .errors import FUBARed
-from .utils import unleet
+from .errors import FUBARed, ConnectionFail, NotLeetEnough
+#from .utils import unleet

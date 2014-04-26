@@ -20,8 +20,7 @@ class Aggravator(p.Manipulator):
         self.permanent_info['main_end'] = 0x0804A9D1
         self.permanent_info['main_stackframe_size'] = 0x24
 
-        self.auto_connection = p.Connection(host=host, port=port).connect()
-        self.c = self.auto_connection
+        self.c = self.set_connection(p.Connection(host=host, port=port).connect())
         self.c.read_until("> ")
 
     @p.printf(byte_offset=244, max_length=31, forbidden={'\x00', '\x0a'})

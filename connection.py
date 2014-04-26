@@ -52,10 +52,13 @@ class Connection(object):
         '''
         l.debug("Sending: %r", msg)
 
-        if self.s is not None:
-            return self.s.sendall(msg)
-        elif self.p is not None:
-            return self.p.stdin.write(msg)
+        try:
+            if self.s is not None:
+                return self.s.sendall(msg)
+            elif self.p is not None:
+                return self.p.stdin.write(msg)
+        except socket.error as e:
+            raise ConnectionFail(str(e))
 
     def recv(self, n, timeout=None):
         '''
