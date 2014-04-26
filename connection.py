@@ -29,7 +29,7 @@ class Connection(object):
 
         self.s = None
         self.p = None
-        self.connect()
+        self.connected = False
 
     def connect(self):
         '''
@@ -41,6 +41,10 @@ class Connection(object):
             self.p = subprocess.Popen(self.exe, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
         else:
             raise Exception("How are we supposed to connect, man?")
+
+        l.info("Connected!")
+        self.connected = True
+        return self
 
     def send(self, msg):
         '''

