@@ -95,6 +95,9 @@ class Manipulator(object):
         if type(n) == str:
             return struct.unpack(self.arch.struct_fmt, n)[0]
 
+    def new_fmt(self):
+        return FmtStr(arch=self.arch)
+
     def _get_vulns(self, t):
         vulns = [ ]
 
@@ -329,7 +332,7 @@ class Manipulator(object):
         '''
         self.do_memory_write(self.plt[name], self.pack(target))
 
-    def read_stack(self, length):
+    def dump_stack(self, length):
         '''
         Read the stack, from the current stack pointer (or something close), to sp+length
 
@@ -409,6 +412,16 @@ class Manipulator(object):
         return pages
 
     def dump_libc(self, filename, start_offset=None):
+        '''
+        Dumps libc, starting either from the page containing __libc_start_main
+        or some other GOT-mapped function and working backwards to the
+        beginning.
+
+        @param filename: the filename to save the leaked bytes to
+        @param start_offset: the offset (on the stack) at which to start
+                             scanning for the return from main. Default:
+                             start from lowest point on stack.
+        '''
         libc_addr = self.main_return_address(start_offset=start_offset)
         libc_contents = self.dump_elf(libc_addr)
         open(filename, "w").write("".join([ libc_contents[k] for k in sorted(libc_contents.keys()) ]))
@@ -452,7 +465,7 @@ class Manipulator(object):
             line = nums[i:i+perline]
             print " ".join([ self.arch.python_fmt % c for c in line ])
 
-    def memory_explorer(self):
+    def memory_explorer(self, start):
         '''
         This launches an interactive memory explorer, using a memory read vuln.
         It should probably be moved somewhere else.
@@ -461,8 +474,11 @@ class Manipulator(object):
         print "### Super Memory Explorer 64"
         print "###"
         print ""
-        sp = self.do_register_read('esp')
-        print "SP:", hex(sp)
+        if start is None:
+            start = self.do_register_read('esp')
+            print "SP:", hex(start)
+        else:
+            print "Starting at:",hex(start)
 
         a = 'asdf'
         addr = None
@@ -471,19 +487,19 @@ class Manipulator(object):
             print ""
             print "# Please enter one of:"
             print "#"
-            print "#    - sp (to go back to the stack)"
+            print "#    - s (to go back to the start address 0x%x)" % start
             print "#    - a hex address (to look at its page)"
             print "#    - q (to quit)"
             print "#    - '' or 'n'(to look at the next page)"
             print "#    - 'p' (to look at the previous page)"
             a = raw_input("> ")
 
-            if a in ['sp']:
-                addr = sp
+            if a in ['s']:
+                addr = start
             elif a in ['', 'n']:
-                addr = addr + self.arch.page_size if addr is not None else sp
+                addr = addr + self.arch.page_size if addr is not None else start
             elif a in ['p']:
-                addr = addr - self.arch.page_size if addr is not None else sp
+                addr = addr - self.arch.page_size if addr is not None else start
             else:
                 try:
                     addr = int(a, 16)
