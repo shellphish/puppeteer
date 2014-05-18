@@ -31,6 +31,7 @@ class FmtStr(object):
 		self._idx = None
 		self._printed = None
 		self.literal_length = None
+		self.prepadding_length = None
 		self.padding_amount = None
 
 		# and set it
@@ -56,6 +57,7 @@ class FmtStr(object):
 		self._printed = 0 if self.num_written is None else self.num_written
 		self.literal_length = 0
 		self.padding_amount = 0
+		self.prepadding_length = 0
 
 	def absolute_write(self, addr, buff):
 		l.debug("Format string adding absolute write of %s to 0x%x", repr(buff), addr)
@@ -112,6 +114,7 @@ class FmtStr(object):
 		self._add_literal(self.prefix)
 		self._add_literal(self.pad_char * ((-(self.offset + len(self._fmt))) % self.arch.bytes))
 		self._pad_to_offset()
+		self.prepadding_length = self._printed
 
 	def _pad_to_offset(self):
 		topad = (-(len(self._fmt) + self.offset)) % self.arch.bytes
@@ -239,7 +242,8 @@ class FmtStr(object):
 				unleet("Forbidden characters (%r) in format string." % f)
 
 		if self.max_length and len(self._fmt) > self.max_length:
-			raise unleet("Format string too long (%d/%d)!" % (len(self._fmt), self.max_length))
+			self._fmt = self._fmt[:self._fmt.rindex('%')]
+			#raise unleet("Format string too long (%d/%d)!" % (len(self._fmt), self.max_length))
 
 		l.debug("... created format strng |%s| of length %s.", repr(self._fmt), len(self._fmt))
 		return self._fmt

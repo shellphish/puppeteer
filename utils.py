@@ -3,6 +3,6 @@ l = logging.getLogger("puppeteer.utils")
 
 from .errors import NotLeetEnough
 
-def unleet(msg):
-	l.warning(msg)
+def unleet(msg, level=logging.WARNING):
+	l.log(level, msg)
 	raise NotLeetEnough(msg)

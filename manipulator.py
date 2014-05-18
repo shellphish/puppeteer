@@ -153,7 +153,7 @@ class Manipulator(object):
                 vulns.append(f)
 
         if len(vulns) == 0 and throw:
-            unleet("Couldn't find an %s vuln" % t)
+            unleet("Couldn't find an %s vuln" % t, level=logging.DEBUG)
         return vulns
 
     def _do_vuln(self, vuln_type, args, kwargs):
@@ -228,7 +228,11 @@ class Manipulator(object):
             else:
                 result = result[fmt.literal_length:]
                 l.debug("... after leading trim: %r", result)
-                result = result[:result.rindex(fmt.pad_char * fmt.padding_amount)]
+                try:
+                    result = result[:result.rindex(fmt.pad_char * fmt.padding_amount)]
+                except ValueError:
+                    l.warning("This is on no sleep and is probably wrong")
+                    result.rstrip(fmt.pad_char)
                 l.debug("... after trailing trim: %r", result)
             return result
         elif isinstance(fmt, str):
@@ -342,9 +346,13 @@ class Manipulator(object):
                 raise
 
             result = ""
-            while len(result) < length:
-                fmt = FmtStr(self.arch).relative_read(offset/self.arch.bytes, length/self.arch.bytes)
-                result += self.do_printf(fmt)
+            while len(result) < length*2:
+                fmt = FmtStr(self.arch).relative_read(1 + len(result)/self.arch.bytes/2 + offset/self.arch.bytes, min(length/self.arch.bytes, 10))
+                r = self.do_printf(fmt)
+                if len(r) > fmt.prepadding_length:
+                    r = r[fmt.prepadding_length:]
+                    r.rstrip(fmt.pad_char)
+                result += r
             return self.fix_endness_strided(result.decode('hex'))
 
     #
@@ -425,16 +433,16 @@ class Manipulator(object):
         '''
         self.do_memory_write(self.plt[name], self.pack(target))
 
-    def dump_stack(self, length):
+    def dump_stack(self, length, offset=0):
         '''
         Read the stack, from the current stack pointer (or something close), to sp+length
 
         @params length: the number of bytes to read. More bytes might be attempted if we end up using
                         a printf
-        @params safe: if True, only do a safe read, if False, only do an unsafe read, if None do either
+        @params offset: the offset
         '''
 
-        return self.do_relative_read(0, length, reg=self.arch.sp_name)
+        return self.do_relative_read(offset, length, reg=self.arch.sp_name)
 
     def main_return_address(self, start_offset=None):
         '''
@@ -466,7 +474,7 @@ class Manipulator(object):
         v = self.unpack(self.do_relative_read(i*self.arch.bytes, self.arch.bytes))
         return v
 
-    def dump_elf(self, addr):
+    def dump_elf(self, addr, filename=None):
         '''
         Dumps an ELF at the given address. The address can index partway into the ELF.
         '''
@@ -480,6 +488,11 @@ class Manipulator(object):
             a = queue.pop()
             l.info("... dumping page 0x%x", a)
             pages[a] = self.do_memory_read(a, self.arch.page_size)
+
+            if type(pages[a]) != str:
+                pages[a] = ''
+
+            pages[a].ljust(self.arch.page_size, '\x00')
 
             # assume that ELFs are continuous in memory, and start with '\x7fELF'
             # however, since the first byte often can't be read by a format string
@@ -502,6 +515,11 @@ class Manipulator(object):
             #   l.info("... 0x%x found!", a + self.arch.page_size)
             #   queue.append(a + self.arch.page_size)
 
+        if filename is not None:
+            f = open(filename, "w")
+            for k in sorted(pages.keys()):
+                f.write(pages[k])
+
         return pages
 
     def dump_libc(self, filename, start_offset=None):
@@ -516,8 +534,7 @@ class Manipulator(object):
                              start from lowest point on stack.
         '''
         libc_addr = self.main_return_address(start_offset=start_offset)
-        libc_contents = self.dump_elf(libc_addr)
-        open(filename, "w").write("".join([ libc_contents[k] for k in sorted(libc_contents.keys()) ]))
+        return self.dump_elf(libc_addr, filename=filename)
 
     #
     # Crazy UI

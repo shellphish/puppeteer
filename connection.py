@@ -22,14 +22,17 @@ class Connection(object):
 
     Will handle all sorts of intelligent stuff like timeouts and crap.
     '''
-    def __init__(self, host=None, port=None, exe=None):
+    def __init__(self, host=None, port=None, exe=None, s=None, fd=None):
         self.host = host
         self.port = port
         self.exe = exe
 
-        self.s = None
-        self.p = None
-        self.connected = False
+        self.s = s
+        self.p = fd
+        self.connected = None if s is None and fd is None else True
+
+    def copy(self):
+        return Connection(host=self.host, port=self.port, exe=self.exe)
 
     def connect(self):
         '''
@@ -45,6 +48,12 @@ class Connection(object):
         l.info("Connected!")
         self.connected = True
         return self
+
+    def close(self):
+        if self.s:
+            self.s.close()
+        elif self.p:
+            self.p.close()
 
     def send(self, msg):
         '''
@@ -71,15 +80,22 @@ class Connection(object):
         else:
             (rlist, _, _) = select.select(slist, [], [])
 
+        l.debug("recv with size %d and timeout %s", n, timeout)
+
         #print rlist, wlist, xlist
         if rlist == []:
             l.debug("RECV TIMEOUT")
             raise ConnectionFail("very timeout")
-        readsock = rlist[0]
-        if type(readsock) == socket.socket:
-            r = readsock.recv(n)
-        if type(readsock) == file:
-            r = readsock.read(n)
+        try:
+            readsock = rlist[0]
+            if type(readsock) == socket.socket:
+                r = readsock.recv(n)
+            if type(readsock) == file:
+                r = readsock.read(n)
+
+            l.debug("read: %r",r)
+        except socket.error:
+            r = ""
 
         if len(r) == 0 and n != 0:
             raise ConnectionFail("Received nothing. Much sad.")
@@ -123,14 +139,18 @@ class Connection(object):
         l.debug("... read: %r", buf)
         return buf
 
-    def read_all(self, timeout):
+    def read_all(self, timeout=None, stepsize=8192):
         '''
         Read as long as there is more stuff and the timeout is not expired.
         '''
         buff = ""
 
         while True:
-            s = self.recv(8192, timeout=timeout)
+            try:
+                s = self.recv(stepsize, timeout=timeout)
+            except ConnectionFail:
+                break
+
             if len(s) == 0:
                 break
             buff += s
