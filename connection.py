@@ -1,6 +1,7 @@
 import socket
 import select
 import subprocess
+import re
 
 import logging
 l = logging.getLogger('puppeteer.connection')
@@ -120,18 +121,30 @@ class Connection(object):
         return result
 
     # read until the given string
-    def read_until(self, c, max_chars=None, timeout=None):
+    def read_until(self, c=None, regex=None, max_chars=None, timeout=None):
         '''
-        Read until the given string.
+        Read until the given string, or matching the given regex.
         '''
-        l.debug("Reading until: %r", c)
+        if c is None and regex is None:
+            # they cannot both be None
+            raise Exception('You must specify at least one argument')
+        if c is not None and regex is not None:
+            raise Exception('You cannot specify both c and regex.')
+
+        if c is None:
+            l.debug("Reading until: %r", c)
+        else:
+            l.debug("Reading until: %s", regex)
 
         buf = ""
+        tmp = None
         while max_chars is None or len(buf) < max_chars:
             #l.debug("... so far: %s", buf)
-            if c in buf:
-                #l.debug("... found!")
+            if (c is not None and tmp == c):
                 break
+            elif (regex is not None and re.search(regex, buf)):
+                break
+
             tmp = self.recv(1, timeout=timeout)
             if tmp == "":
                 break
