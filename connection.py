@@ -131,7 +131,7 @@ class Connection(object):
         if c is not None and regex is not None:
             raise Exception('You cannot specify both c and regex.')
 
-        if c is None:
+        if c is not None:
             l.debug("Reading until: %r", c)
         else:
             l.debug("Reading until: %s", regex)
@@ -139,10 +139,10 @@ class Connection(object):
         buf = ""
         tmp = None
         while max_chars is None or len(buf) < max_chars:
-            #l.debug("... so far: %s", buf)
-            if (c is not None and tmp == c):
+            l.debug("... so far: %s", buf)
+            if c is not None and buf.endswith(c):
                 break
-            elif (regex is not None and re.search(regex, buf)):
+            elif regex is not None and re.search(regex, buf):
                 break
 
             tmp = self.recv(1, timeout=timeout)
