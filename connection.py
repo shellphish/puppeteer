@@ -23,17 +23,17 @@ class Connection(object):
 
     Will handle all sorts of intelligent stuff like timeouts and crap.
     '''
-    def __init__(self, host=None, port=None, exe=None, s=None, fd=None):
+    def __init__(self, host=None, port=None, exe=None, args=(), s=None, fd=None):
         self.host = host
         self.port = port
-        self.exe = exe
+        self.exe_args = [ exe ] + list(args)
 
         self.s = s
         self.p = fd
         self.connected = None if s is None and fd is None else True
 
     def copy(self):
-        return Connection(host=self.host, port=self.port, exe=self.exe)
+        return Connection(host=self.host, port=self.port, exe=self.exe_args[0], args=self.exe_args[1:])
 
     def connect(self):
         '''
@@ -41,8 +41,8 @@ class Connection(object):
         '''
         if self.host is not None and self.port is not None:
             self.s = socket.create_connection((self.host, self.port))
-        elif self.exe is not None:
-            self.p = subprocess.Popen(self.exe, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
+        elif self.exe_args[0] is not None:
+            self.p = subprocess.Popen(self.exe_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
         else:
             raise Exception("How are we supposed to connect, man?")
 
@@ -70,7 +70,7 @@ class Connection(object):
         except socket.error as e:
             raise ConnectionFail(str(e))
 
-    def recv(self, n, timeout=None):
+    def recv(self, n, timeout=None, quash=False):
         '''
         Receive up to n bytes.
         '''
@@ -86,7 +86,10 @@ class Connection(object):
         #print rlist, wlist, xlist
         if rlist == []:
             l.debug("RECV TIMEOUT")
-            raise ConnectionFail("very timeout")
+            if not quash:
+                raise ConnectionFail("very timeout")
+            else:
+                return ""
         try:
             readsock = rlist[0]
             if type(readsock) == socket.socket:
@@ -104,7 +107,7 @@ class Connection(object):
         #l.debug("Got: %r", r)
         return r
 
-    def read(self, n=None, timeout=None):
+    def read(self, n=None, timeout=None, quash=False):
         '''
         Read exactly n bytes, or all that's available if n is None.
         '''
@@ -113,7 +116,7 @@ class Connection(object):
 
         result = ""
         while len(result) < n:
-            tmp = self.recv(n - len(result), timeout=timeout)
+            tmp = self.recv(n - len(result), timeout=timeout, quash=quash)
             if tmp == "" and timeout is not None:
                 break
             result += tmp
