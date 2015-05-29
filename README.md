@@ -1,5 +1,10 @@
 # puppeteer
 
+puppeteer was an attempt to create an exploit framework, but it ended up being too overengineered and wasn't used too much. It's here for posterity.
+
+# Old README:
+
+
 It's time for a framework for super l337 exploit development!
 
 We spent a lot of time, and a lot of implementation effort, making programs dance the way we want them. Why not automate some of that?
